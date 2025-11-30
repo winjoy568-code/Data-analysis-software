@@ -161,28 +161,26 @@ if start_analysis:
             )
             df["總損失"] = df["能源損失"] + df["產能損失機會成本"]
             
-            # --- 判斷單廠還是多廠，決定彙整邏輯 ---
+            # --- 判斷單廠還是多廠 ---
             if "廠別" not in df.columns: df["廠別"] = "匯入廠區"
             
             is_multi_factory = df["廠別"].nunique() > 1
             if is_multi_factory:
-                # 多廠模式：以「廠別」為群組
                 group_col = "廠別"
                 summary_title = "各廠區生產績效總表"
                 analysis_scope = "跨廠區分析"
             else:
-                # 單廠模式：以「機台編號」為群組
                 group_col = "機台編號"
                 summary_title = "各機台生產績效總表"
                 analysis_scope = "單廠設備分析"
 
-            # 聚合運算 (Summary Table)
+            # 聚合運算
             summary_agg = df.groupby(group_col).agg({
                 "OEE": "mean", "產量": "sum", "耗電量": "sum", 
                 "能源損失": "sum", "總損失": "sum"
             }).reset_index()
             summary_agg["平均單位能耗"] = summary_agg["耗電量"] / summary_agg["產量"]
-            summary_agg = summary_agg.sort_values("OEE", ascending=False) # 依效率排名
+            summary_agg = summary_agg.sort_values("OEE", ascending=False)
 
             # --- 報告開始 ---
             st.markdown("---")
@@ -190,11 +188,10 @@ if start_analysis:
             st.markdown(f"**分析範圍：** {analysis_scope} &nbsp;&nbsp;&nbsp; **報告日期：** {pd.Timestamp.now().strftime('%Y-%m-%d')}")
             
             # ==========================================
-            # 第一部分：總體績效概覽
+            # 1. 總體績效
             # ==========================================
             st.header("1. 總體績效概覽 (Executive Summary)")
             
-            # KPI
             avg_oee_total = df["OEE"].mean()
             total_loss = df["總損失"].sum()
             
@@ -206,13 +203,11 @@ if start_analysis:
             st.write("")
             st.subheader(f"📊 {summary_title}")
             
-            # 準備顯示表格 (去除不必要的欄位，只留彙整數據)
             display_cols = [group_col, "OEE", "產量", "耗電量", "平均單位能耗", "總損失"]
             final_table = summary_agg[display_cols].rename(columns={
                 "OEE": "平均OEE", "產量": "總產量", "耗電量": "總耗電", "總損失": "潛在損失($)"
             })
             
-            # 計算表格高度以取消捲軸: (行數 + 表頭) * 行高
             table_height = (len(final_table) + 1) * 35 + 5
             
             st.dataframe(
@@ -220,29 +215,29 @@ if start_analysis:
                     "平均OEE": "{:.1%}", "平均單位能耗": "{:.5f}", "潛在損失($)": "${:,.0f}", "總產量": "{:,.0f}", "總耗電": "{:,.1f}"
                 }).background_gradient(subset=["平均OEE"], cmap="Blues"),
                 use_container_width=True,
-                height=table_height # 自動展開所有高度
+                height=table_height
             )
 
-            # 排行榜 (高對比色)
+            # 排行榜 (橫向條形圖)
             st.subheader(f"{group_col} 綜合實力排名")
             
-            # 設定顏色：使用深藍色單色，避免淺色看不清
+            # 計算最大值以設定邊界
+            max_oee = summary_agg["OEE"].max()
+            
             fig_rank = px.bar(
                 summary_agg.sort_values("OEE", ascending=True), 
                 x="OEE", y=group_col, orientation='h',
                 text="OEE", 
                 title=f"依平均 OEE 排序 (數值越高越好)"
             )
-            # 強制設定高對比顏色
             fig_rank.update_traces(marker_color='#1f618d', texttemplate='%{text:.1%}', textposition='outside', textfont=dict(size=14, color='black'))
             fig_rank.update_layout(
                 plot_bgcolor='white', 
-                xaxis=dict(showgrid=True, gridcolor='#eee'),
+                xaxis=dict(showgrid=True, gridcolor='#eee', range=[0, max_oee * 1.25]), # 【關鍵修正】預留 25% 空間
                 height=400, font=dict(size=14, color='black')
             )
             st.plotly_chart(fig_rank, use_container_width=True)
             
-            # 分析解讀
             top_performer = summary_agg.iloc[0][group_col]
             last_performer = summary_agg.iloc[-1][group_col]
             
@@ -255,22 +250,26 @@ if start_analysis:
             """, unsafe_allow_html=True)
 
             # ==========================================
-            # 第二部分：趨勢與穩定性分析
+            # 2. 趨勢與穩定性
             # ==========================================
             st.header("2. 生產趨勢與穩定性分析")
             
-            # CV 分析 (如果有多筆資料才做)
             st.subheader("生產穩定度 (CV變異係數)")
             if len(df) > 1:
-                # 計算每個群組的 CV
                 cv_data = df.groupby(group_col)["OEE"].agg(['mean', 'std'])
                 cv_data['CV(%)'] = (cv_data['std'] / cv_data['mean']) * 100
                 cv_data = cv_data.fillna(0).reset_index().sort_values('CV(%)')
                 
+                # 計算最大值以設定邊界
+                max_cv = cv_data['CV(%)'].max()
+
                 fig_cv = px.bar(cv_data, x=group_col, y="CV(%)", text="CV(%)", title="OEE 波動率 (數值越低代表生產越穩定)")
-                # 使用深紅色強調
                 fig_cv.update_traces(marker_color='#922b21', texttemplate='%{text:.1f}%', textposition='outside', textfont=dict(size=14, color='black'))
-                fig_cv.update_layout(plot_bgcolor='white', yaxis=dict(showgrid=True, gridcolor='#eee'), height=400, font=dict(size=14, color='black'))
+                fig_cv.update_layout(
+                    plot_bgcolor='white', 
+                    yaxis=dict(showgrid=True, gridcolor='#eee', range=[0, max_cv * 1.2]), # 【關鍵修正】預留 20% 頂部空間
+                    height=400, font=dict(size=14, color='black')
+                )
                 st.plotly_chart(fig_cv, use_container_width=True)
                 
                 most_stable = cv_data.iloc[0][group_col]
@@ -289,7 +288,6 @@ if start_analysis:
             # 相關性分析
             st.subheader("效率 vs 能耗 關聯分析")
             try:
-                # 使用深色點位
                 fig_corr = px.scatter(
                     df, x="OEE", y="單位能耗", 
                     color=group_col, size="產量", 
@@ -316,7 +314,7 @@ if start_analysis:
             """, unsafe_allow_html=True)
 
             # ==========================================
-            # 第三部分：電力耗能深度分析
+            # 3. 電力耗能
             # ==========================================
             st.header("3. 電力耗能深度分析")
 
@@ -324,22 +322,28 @@ if start_analysis:
 
             with col_p1:
                 st.subheader("總耗電量佔比")
-                # 使用簡單配色
                 fig_pie = px.pie(summary_agg, values="耗電量", names=group_col, hole=0.4)
                 fig_pie.update_traces(textinfo='percent+label', textfont=dict(size=14, color='black'), marker=dict(colors=px.colors.qualitative.Safe))
                 st.plotly_chart(fig_pie, use_container_width=True)
 
             with col_p2:
                 st.subheader("平均單位能耗 (kWh/雙)")
+                
+                # 計算最大值以設定邊界
+                max_unit = summary_agg["平均單位能耗"].max()
+
                 fig_unit = px.bar(
                     summary_agg.sort_values("平均單位能耗"), 
                     x=group_col, y="平均單位能耗", 
                     text="平均單位能耗",
                     title="生產每雙產品之平均耗電 (越低越好)"
                 )
-                # 使用深綠色表示節能
                 fig_unit.update_traces(marker_color='#145a32', texttemplate='%{text:.4f}', textposition='outside', textfont=dict(size=14, color='black'))
-                fig_unit.update_layout(plot_bgcolor='white', height=400, font=dict(size=14, color='black'))
+                fig_unit.update_layout(
+                    plot_bgcolor='white', 
+                    yaxis=dict(range=[0, max_unit * 1.2]), # 【關鍵修正】預留 20% 頂部空間
+                    height=400, font=dict(size=14, color='black')
+                )
                 st.plotly_chart(fig_unit, use_container_width=True)
             
             best_p = summary_agg.sort_values("平均單位能耗").iloc[0][group_col]
@@ -354,7 +358,7 @@ if start_analysis:
             """, unsafe_allow_html=True)
 
             # ==========================================
-            # 第四部分：結論與行動建議
+            # 4. 結論
             # ==========================================
             st.header("4. 綜合診斷結論 (Conclusion)")
             st.markdown(f"針對 {analysis_scope} 之綜合診斷結果：")
@@ -367,15 +371,15 @@ if start_analysis:
                 if m_oee >= target_oee/100:
                     status = "✅ 優良"
                     action = "維持現狀，將其運作模式標準化，並作為其他單位的學習標竿。"
-                    color = "#2ecc71" # Green
+                    color = "#2ecc71"
                 elif m_oee >= 0.70:
                     status = "⚠️ 尚可"
                     action = "需針對短暫停機進行分析，目標提升稼動率 5% 以上。"
-                    color = "#f1c40f" # Yellow
+                    color = "#f1c40f"
                 else:
                     status = "❌ 異常"
                     action = "為主要虧損來源，建議立即檢修設備，並審視排程規劃與人員操作手法。"
-                    color = "#e74c3c" # Red
+                    color = "#e74c3c"
 
                 st.markdown(f"""
                 ### 🔧 {group_col}：{target_name}
