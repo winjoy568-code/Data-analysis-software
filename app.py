@@ -196,7 +196,7 @@ if start_analysis:
             st.markdown("---")
             st.title("生產效能診斷分析報告")
             
-            # 新增：顯示分析日期區間
+            # 顯示分析日期區間
             st.markdown(f"**分析範圍：** {analysis_scope} &nbsp;&nbsp; **數據期間：** {start_date} 至 {end_date} &nbsp;&nbsp; **生成日期：** {pd.Timestamp.now().strftime('%Y-%m-%d')}")
             
             # ==========================================
