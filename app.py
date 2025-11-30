@@ -4,13 +4,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time
 import numpy as np
-import re # 新增：用於正規表達式清除符號
 from io import BytesIO
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. 頁面設定 ---
+# --- 1. 頁面設定 (Ver 12.0 風格 - 通用字體) ---
 st.set_page_config(page_title="生產效能診斷報告", layout="centered")
 
 st.markdown("""
@@ -32,7 +31,27 @@ st.markdown("""
         color: #212f3d !important;
     }
     
-    /* 結論區塊樣式 */
+    /* 數據指標卡片 */
+    div[data-testid="stMetricValue"] {
+        font-size: 32px !important;
+        color: #17202a !important;
+        font-weight: bold;
+    }
+
+    /* 分析觀點框 */
+    .analysis-text {
+        font-size: 18px;
+        font-weight: 500;
+        color: #2c3e50;
+        margin-top: 15px;
+        margin-bottom: 30px;
+        border: 2px solid #5d6d7e;
+        background-color: #ebf5fb;
+        padding: 20px;
+        border-radius: 8px;
+    }
+    
+    /* 結論總結框 */
     .summary-box {
         border: 2px solid #333;
         padding: 20px;
@@ -41,14 +60,7 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* 按鈕樣式調整 */
-    div.stButton > button:first-child {
-        width: 100%;
-        height: 3em;
-        font-size: 18px;
-        font-weight: bold;
-    }
-    
+    /* 隱藏表格索引行 */
     thead tr th:first-child {display:none}
     tbody th {display:none}
     </style>
@@ -78,15 +90,6 @@ def smart_load_file(uploaded_file):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-# --- 輔助函數：清除 Markdown/HTML 標籤 (解決 Word 亂碼) ---
-def clean_text(text):
-    if not isinstance(text, str): return str(text)
-    # 移除 <b>, </b>, **, * 等符號
-    text = re.sub(r'</?b>', '', text)
-    text = re.sub(r'\*\*', '', text)
-    text = re.sub(r'\*', '', text)
-    return text
-
 # --- Word 生成引擎 ---
 def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     doc = Document()
@@ -97,14 +100,14 @@ def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     # 標題
     head = doc.add_heading('生產效能診斷分析報告', 0)
     head.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    doc.add_paragraph(f"分析範圍：{clean_text(analysis_scope)}")
+    doc.add_paragraph(f"分析範圍：{analysis_scope}")
     doc.add_paragraph(f"數據期間：{df['日期'].min()} 至 {df['日期'].max()}")
     doc.add_paragraph(f"生成日期：{pd.Timestamp.now().strftime('%Y-%m-%d')}")
     doc.add_paragraph("-" * 50)
 
     # 1. 總覽
     doc.add_heading('1. 總體績效概覽', level=1)
-    doc.add_paragraph(clean_text(texts.get('summary_kpi', '')))
+    doc.add_paragraph(texts.get('summary_kpi', ''))
     
     doc.add_heading('績效總表', level=2)
     table = doc.add_table(rows=1, cols=len(summary_agg.columns))
@@ -128,29 +131,28 @@ def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
                 doc.add_paragraph("[註：圖表自動生成失敗，請參閱網頁版]")
     
     safe_add_image('rank', '綜合實力排名')
-    doc.add_paragraph(clean_text(texts['rank_insight']))
 
     # 2. 趨勢
     doc.add_heading('2. 生產趨勢與穩定性', level=1)
     safe_add_image('cv', '生產穩定度 (CV)')
-    doc.add_paragraph(clean_text(texts.get('cv_insight', '')))
+    doc.add_paragraph(texts.get('cv_insight', ''))
     
     safe_add_image('corr', '效率 vs 能耗')
-    doc.add_paragraph(clean_text(texts.get('corr_insight', '')))
+    doc.add_paragraph(texts.get('corr_insight', ''))
 
     # 3. 能耗
     doc.add_heading('3. 電力耗能分析', level=1)
     safe_add_image('pie', '總耗電量佔比')
     safe_add_image('unit', '平均單位能耗')
-    doc.add_paragraph(clean_text(texts.get('unit_insight', '')))
+    doc.add_paragraph(texts.get('unit_insight', ''))
 
     # 4. 結論
     doc.add_heading('4. 綜合診斷結論', level=1)
     doc.add_paragraph("現況總結：")
-    doc.add_paragraph(clean_text(texts.get('conclusion_summary', '')))
+    doc.add_paragraph(texts.get('conclusion_summary', ''))
     
     doc.add_heading('策略行動建議', level=2)
-    doc.add_paragraph(clean_text(texts.get('conclusion_action', '')))
+    doc.add_paragraph(texts.get('conclusion_action', ''))
 
     bio = BytesIO()
     doc.save(bio)
@@ -162,8 +164,10 @@ st.markdown("### 📥 數據輸入控制台")
 uploaded_file = st.file_uploader("批次匯入 Excel", type=["xlsx", "csv"], label_visibility="collapsed")
 if uploaded_file:
     new_df, status = smart_load_file(uploaded_file)
-    if status == "OK": st.session_state.input_data = new_df
-    else: st.error(f"錯誤: {status}")
+    if status == "OK":
+        st.session_state.input_data = new_df
+    else:
+        st.error(f"錯誤: {status}")
 
 edited_df = st.data_editor(
     st.session_state.input_data, num_rows="dynamic", use_container_width=True,
@@ -278,7 +282,6 @@ if start_analysis:
                 text="OEE", 
                 title=f"依平均 OEE 排序"
             )
-            # 強制設定顏色 (避免黑白) 和 字體 (避免亂碼)
             fig_rank.update_traces(marker_color='#1f618d', texttemplate='%{text:.1%}', textposition='outside', textfont=dict(size=14, color='black'))
             fig_rank.update_layout(
                 plot_bgcolor='white', 
@@ -288,7 +291,6 @@ if start_analysis:
             )
             st.plotly_chart(fig_rank, use_container_width=True)
             figures['rank'] = fig_rank
-            texts['rank_insight'] = f"根據數據彙整，**{summary_agg.iloc[0][group_col]}** 表現最佳。**{summary_agg.iloc[-1][group_col]}** 效率最低，建議優先改善。"
             
             # 2. 趨勢
             st.header("2. 生產趨勢與穩定性分析")
@@ -300,7 +302,6 @@ if start_analysis:
                 max_cv = cv_data['CV(%)'].max()
 
                 fig_cv = px.bar(cv_data, x=group_col, y="CV(%)", text="CV(%)", title="OEE 波動率")
-                # 強制紅色
                 fig_cv.update_traces(marker_color='#922b21', texttemplate='%{text:.1f}%', textposition='outside', textfont=dict(size=14, color='black'))
                 fig_cv.update_layout(
                     plot_bgcolor='white', 
@@ -310,19 +311,18 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_cv, use_container_width=True)
                 figures['cv'] = fig_cv
-                texts['cv_insight'] = f"**{cv_data.iloc[0][group_col]}** 生產最穩定 (CV最低)。"
+                texts['cv_insight'] = "CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。"
+                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['cv_insight']}</div>""", unsafe_allow_html=True)
             else:
                 st.info("數據量不足，無法分析波動率。")
 
             st.subheader("效率 vs 能耗 關聯分析")
             try:
-                # 強制使用彩色 (Set1)
                 fig_corr = px.scatter(
                     df, x="OEE", y="單位能耗", 
                     color=group_col, size="產量", 
                     trendline="ols",
-                    title="X軸:效率(越高越好) / Y軸:能耗(越低越好)",
-                    color_discrete_sequence=px.colors.qualitative.Set1 
+                    title="X軸:效率(越高越好) / Y軸:能耗(越低越好)"
                 )
                 fig_corr.update_layout(
                     plot_bgcolor='white', 
@@ -333,7 +333,8 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_corr, use_container_width=True)
                 figures['corr'] = fig_corr
-                texts['corr_insight'] = "理想狀態為落點於右下角。若出現左上角異常點，代表設備可能處於空轉浪費狀態。"
+                texts['corr_insight'] = "此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為<b>右下角</b>。若出現位於<b>左上角</b>的異常點（低效率、高耗能），通常代表設備處於「空轉浪費」狀態，應查核當日日誌。"
+                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['corr_insight']}</div>""", unsafe_allow_html=True)
             except:
                 fig_corr = px.scatter(df, x="OEE", y="單位能耗", color=group_col, size="產量")
                 st.plotly_chart(fig_corr, use_container_width=True)
@@ -358,7 +359,6 @@ if start_analysis:
                     text="平均單位能耗",
                     title="平均耗電"
                 )
-                # 強制綠色
                 fig_unit.update_traces(marker_color='#145a32', texttemplate='%{text:.4f}', textposition='outside', textfont=dict(size=14, color='black'))
                 fig_unit.update_layout(
                     plot_bgcolor='white', 
@@ -368,7 +368,8 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_unit, use_container_width=True)
                 figures['unit'] = fig_unit
-            texts['unit_insight'] = f"**{summary_agg.sort_values('平均單位能耗').iloc[0][group_col]}** 能源轉換效率最高。"
+            texts['unit_insight'] = "單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化、傳動阻力過大或保溫失效等硬體問題，建議列入年度歲修重點。"
+            st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['unit_insight']}</div>""", unsafe_allow_html=True)
 
             # 4. 結論
             st.header("4. 綜合診斷結論")
@@ -398,9 +399,13 @@ if start_analysis:
                 })
             
             st.markdown("### 📌 現況總結")
-            status_summary = f"本次分析區間內，全廠平均 OEE 為 **{avg_oee_total:.1%}**。"
-            if avg_oee_total < 0.7: status_summary += " 整體效率偏低，存在改善空間。"
-            else: status_summary += " 整體效率表現尚可。"
+            status_summary = f"本次分析區間內 ({start_date} 至 {end_date})，全廠平均 OEE 為 **{avg_oee_total:.1%}**。"
+            if avg_oee_total < 0.7:
+                status_summary += " 整體生產效率偏低，存在顯著改善空間，主要虧損來源於產能未達標造成的機會成本。"
+            elif avg_oee_total >= target_oee/100:
+                status_summary += " 整體生產效率優異，已達世界級水準。"
+            else:
+                status_summary += " 生產效率維持在一般水準，部分設備表現優異，但仍有落後設備拉低平均。"
             
             texts['conclusion_summary'] = f"{status_summary}\n累計潛在財務損失總額：NT$ {total_loss:,.0f}。"
             st.markdown(f'<div class="summary-box">{texts["conclusion_summary"]}</div>', unsafe_allow_html=True)
@@ -420,4 +425,18 @@ if start_analysis:
                 names = ", ".join(good_list)
                 action_text += f"**3. 標竿管理 (Benchmark):**\n* 目標設備：{names}\n* 行動方案：運作狀況極佳。建議將其操作標準書 (SOP) 與保養模式標準化。\n"
             
-            texts['
+            texts['conclusion_action'] = action_text
+            st.markdown(action_text)
+
+            # --- Word 下載按鈕 (靜靜地放在最後) ---
+            st.markdown("---")
+            st.subheader("📥 匯出報告")
+            
+            doc_file = generate_word_report(df, summary_agg, figures, texts, analysis_scope)
+            
+            st.download_button(
+                label="下載 Word 分析報告 (.docx)",
+                data=doc_file.getvalue(),
+                file_name=f"生產效能分析報告_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
