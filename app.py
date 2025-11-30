@@ -28,7 +28,27 @@ st.markdown("""
         color: #212f3d !important;
     }
     
-    /* 結論區塊樣式 */
+    /* 數據指標卡片 */
+    div[data-testid="stMetricValue"] {
+        font-size: 32px !important;
+        color: #17202a !important;
+        font-weight: bold;
+    }
+
+    /* 分析觀點框 */
+    .analysis-text {
+        font-size: 18px;
+        font-weight: 500;
+        color: #2c3e50;
+        margin-top: 15px;
+        margin-bottom: 30px;
+        border: 2px solid #5d6d7e;
+        background-color: #ebf5fb;
+        padding: 20px;
+        border-radius: 8px;
+    }
+    
+    /* 結論總結框 */
     .summary-box {
         border: 2px solid #333;
         padding: 20px;
@@ -37,6 +57,7 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
+    /* 隱藏表格索引行以節省空間 */
     thead tr th:first-child {display:none}
     tbody th {display:none}
     </style>
@@ -146,6 +167,10 @@ if start_analysis:
             )
             df["總損失"] = df["能源損失"] + df["產能損失機會成本"]
             
+            # 取得分析日期區間
+            start_date = df["日期"].min()
+            end_date = df["日期"].max()
+            
             # --- 判斷單廠還是多廠 ---
             if "廠別" not in df.columns: df["廠別"] = "匯入廠區"
             
@@ -170,7 +195,9 @@ if start_analysis:
             # --- 報告開始 ---
             st.markdown("---")
             st.title("生產效能診斷分析報告")
-            st.markdown(f"**分析範圍：** {analysis_scope} &nbsp;&nbsp;&nbsp; **報告日期：** {pd.Timestamp.now().strftime('%Y-%m-%d')}")
+            
+            # 新增：顯示分析日期區間
+            st.markdown(f"**分析範圍：** {analysis_scope} &nbsp;&nbsp; **數據期間：** {start_date} 至 {end_date} &nbsp;&nbsp; **生成日期：** {pd.Timestamp.now().strftime('%Y-%m-%d')}")
             
             # ==========================================
             # 1. 總體績效
@@ -242,9 +269,11 @@ if start_analysis:
                 st.plotly_chart(fig_cv, use_container_width=True)
                 
                 st.markdown("""
-                **分析觀點：**
+                <div class="analysis-text">
+                <b>📈 分析觀點：</b><br>
                 CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。
-                """)
+                </div>
+                """, unsafe_allow_html=True)
             else:
                 st.info("數據量不足，無法分析波動率。")
 
@@ -264,9 +293,11 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_corr, use_container_width=True)
                 st.markdown("""
-                **分析觀點：**
-                此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為**右下角**。若出現位於**左上角**的異常點（低效率、高耗能），通常代表設備處於「空轉浪費」狀態，應查核當日日誌。
-                """)
+                <div class="analysis-text">
+                <b>📈 分析觀點：</b><br>
+                此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為<b>右下角</b>。若出現位於<b>左上角</b>的異常點（低效率、高耗能），通常代表設備處於「空轉浪費」狀態，應查核當日日誌。
+                </div>
+                """, unsafe_allow_html=True)
             except:
                 fig_corr = px.scatter(df, x="OEE", y="單位能耗", color=group_col, size="產量")
                 st.plotly_chart(fig_corr, use_container_width=True)
@@ -301,12 +332,14 @@ if start_analysis:
                 st.plotly_chart(fig_unit, use_container_width=True)
             
             st.markdown("""
-            **分析觀點：**
+            <div class="analysis-text">
+            <b>📈 分析觀點：</b><br>
             單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化、傳動阻力過大或保溫失效等硬體問題，建議列入年度歲修重點。
-            """)
+            </div>
+            """, unsafe_allow_html=True)
 
             # ==========================================
-            # 4. 綜合診斷結論 (改版重點)
+            # 4. 綜合診斷結論
             # ==========================================
             st.header("4. 綜合診斷結論 (Executive Conclusion)")
 
@@ -330,7 +363,7 @@ if start_analysis:
             
             # --- B. 診斷內容生成 ---
             st.markdown("### 📌 現況總結")
-            status_summary = f"本次分析區間內，全廠平均 OEE 為 **{avg_oee_total:.1%}**。"
+            status_summary = f"本次分析區間內 ({start_date} 至 {end_date})，全廠平均 OEE 為 **{avg_oee_total:.1%}**。"
             if avg_oee_total < 0.7:
                 status_summary += " 整體生產效率偏低，存在顯著改善空間，主要虧損來源於產能未達標造成的機會成本。"
             elif avg_oee_total >= target_oee/100:
@@ -369,7 +402,7 @@ if start_analysis:
 
             st.markdown("### 🚀 策略行動建議")
 
-            # 針對異常設備的建議 (合併寫法)
+            # 針對異常設備的建議
             if critical_machines:
                 names = ", ".join([m.split(' ')[0].replace('*','') for m in critical_machines])
                 st.markdown(f"""
