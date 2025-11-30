@@ -14,22 +14,65 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. 核心邏輯 ---
+# --- 2. 核心邏輯與智慧讀取 ---
 
 def init_session_state():
     if 'data' not in st.session_state:
         # 預設範例數據
         st.session_state.data = pd.DataFrame([
-            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO2", "OEE": 0.82, "產量": 1150, "耗電量": 155.0},
-            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO3", "OEE": 0.68, "產量": 920, "耗電量": 148.0},
-            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO4", "OEE": 0.91, "產量": 1500, "耗電量": 160.2},
+            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO2", "OEE": 0.501, "產量": 2009.5, "耗電量": 6.2},
+            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO4", "OEE": 0.554, "產量": 4416.5, "耗電量": 9.1},
+            {"日期": "2025-11-18", "廠別": "A廠", "機台編號": "ACO4", "OEE": 0.605, "產量": 4921.5, "耗電量": 9.5},
         ])
         st.session_state.data['日期'] = pd.to_datetime(st.session_state.data['日期']).dt.date
 
 init_session_state()
 
+def smart_load_file(uploaded_file):
+    """智慧讀取並轉換欄位名稱"""
+    try:
+        if uploaded_file.name.endswith('.csv'):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+        
+        # 1. 欄位對照字典 (左邊是你的Excel欄位，右邊是系統欄位)
+        rename_map = {
+            "設備": "機台編號",
+            "用電量 (kWh)": "耗電量",
+            "產量 (雙)": "產量",
+            "OEE (%)": "OEE",
+            "OEE(%)": "OEE"
+        }
+        df = df.rename(columns=rename_map)
+        
+        # 2. 處理必要欄位
+        if "日期" in df.columns:
+            df["日期"] = pd.to_datetime(df["日期"]).dt.date
+            
+        # 3. 自動修正 OEE (如果是 76.1 這種百分比格式，除以 100)
+        if "OEE" in df.columns:
+            if df["OEE"].mean() > 1.0: 
+                df["OEE"] = df["OEE"] / 100.0
+                
+        # 4. 處理缺少的廠別
+        if "廠別" not in df.columns:
+            df["廠別"] = "匯入廠區" # 預設值
+            
+        # 5. 過濾出系統需要的欄位
+        required_cols = ["日期", "廠別", "機台編號", "OEE", "產量", "耗電量"]
+        
+        # 檢查是否還有缺少的欄位
+        missing = [col for col in required_cols if col not in df.columns]
+        if missing:
+            return None, f"缺少必要欄位: {missing}"
+            
+        return df[required_cols], "OK"
+        
+    except Exception as e:
+        return None, str(e)
+
 def calculate_metrics(df, elec_price):
-    # 計算單位能耗與成本損失
     df["單位能耗"] = df["耗電量"] / df["產量"]
     best_energy_unit = df["單位能耗"].min()
     df["能源損失(元)"] = (df["單位能耗"] - best_energy_unit) * df["產量"] * elec_price
@@ -49,26 +92,16 @@ st.sidebar.subheader("2. 數據輸入")
 input_mode = st.sidebar.radio("選擇模式", ["手動輸入", "上傳 Excel"])
 
 if input_mode == "上傳 Excel":
-    uploaded_file = st.sidebar.file_uploader("上傳報表", type=["xlsx", "csv"])
+    uploaded_file = st.sidebar.file_uploader("上傳報表 (支援欄位: 日期, 設備, OEE%, 產量, 用電量)", type=["xlsx", "csv"])
     if uploaded_file:
-        try:
-            if uploaded_file.name.endswith('.csv'):
-                new_data = pd.read_csv(uploaded_file)
-            else:
-                new_data = pd.read_excel(uploaded_file)
-            
-            required_cols = ["日期", "廠別", "機台編號", "OEE", "產量", "耗電量"]
-            if all(col in new_data.columns for col in required_cols):
-                # 確保日期格式一致
-                if '日期' in new_data.columns:
-                     new_data['日期'] = pd.to_datetime(new_data['日期']).dt.date
-                st.session_state.data = pd.concat([st.session_state.data, new_data], ignore_index=True)
-                st.sidebar.success(f"成功匯入 {len(new_data)} 筆數據！")
-                st.rerun()
-            else:
-                st.sidebar.error(f"欄位錯誤，需包含: {required_cols}")
-        except Exception as e:
-            st.sidebar.error(f"讀取錯誤: {e}")
+        new_df, status = smart_load_file(uploaded_file)
+        if status == "OK":
+            st.session_state.data = pd.concat([st.session_state.data, new_df], ignore_index=True)
+            st.sidebar.success(f"成功匯入 {len(new_df)} 筆數據！")
+            st.rerun()
+        else:
+            st.sidebar.error(f"讀取失敗: {status}")
+            st.sidebar.info("提示: 請確保 Excel 包含「日期, 設備, OEE (%), 產量 (雙), 用電量 (kWh)」等資訊")
 
 else:
     # 回歸經典：表單輸入模式
@@ -77,11 +110,11 @@ else:
         col1, col2 = st.columns(2)
         in_date = col1.date_input("日期")
         in_factory = col2.text_input("廠別", "A廠")
-        in_machine = st.text_input("機台編號", "ACO-X")
+        in_machine = st.text_input("設備/機台", "ACO-X")
         
         in_oee = st.number_input("OEE (0.0 - 1.0)", 0.0, 1.0, 0.85, 0.01)
         in_output = st.number_input("產量 (雙)", 1, 10000, 1000)
-        in_power = st.number_input("耗電量 (kWh)", 0.0, 10000.0, 150.0)
+        in_power = st.number_input("用電量 (kWh)", 0.0, 10000.0, 150.0)
         
         submitted = st.form_submit_button("💾 加入數據庫", type="primary")
         
@@ -133,10 +166,16 @@ if not st.session_state.data.empty:
     def highlight_oee(val):
         return 'background-color: #d4edda' if val >= 0.85 else 'background-color: #f8d7da' if val < 0.70 else ''
 
+    # 顯示使用者習慣的欄位名稱
+    display_df = df_analysis.rename(columns={
+        "機台編號": "設備", "耗電量": "用電量(kWh)", "產量": "產量(雙)"
+    })
+    
     st.dataframe(
-        df_analysis.sort_values("效率排名").style
+        display_df[["日期", "廠別", "設備", "OEE", "產量(雙)", "用電量(kWh)", "單位能耗", "效率排名", "能源損失(元)"]]
+        .sort_values("效率排名").style
         .applymap(highlight_oee, subset=['OEE'])
-        .format({"OEE": "{:.2%}", "單位能耗": "{:.4f}", "能源損失(元)": "${:,.0f}"}),
+        .format({"OEE": "{:.2%}", "單位能耗": "{:.5f}", "能源損失(元)": "${:,.0f}"}),
         use_container_width=True,
         hide_index=True
     )
