@@ -13,45 +13,30 @@ st.markdown("""
     <style>
     .main { background-color: #ffffff; }
     
-    /* 全域字體設定 */
     html, body, [class*="css"] {
         font-family: 'Microsoft JhengHei', '微軟正黑體', sans-serif;
         color: #000000;
     }
     
-    /* 標題設定 */
     h1 { color: #000000; font-weight: 900; font-size: 2.6em; text-align: center; margin-bottom: 20px; border-bottom: 4px solid #2c3e50; padding-bottom: 20px; }
     h2 { color: #1a5276; border-left: 8px solid #1a5276; padding-left: 15px; margin-top: 50px; font-size: 2em; font-weight: bold; background-color: #f2f3f4; padding-top: 5px; padding-bottom: 5px;}
     h3 { color: #2e4053; margin-top: 30px; font-size: 1.5em; font-weight: 700; }
     
-    /* 內文設定 */
     p, li, .stMarkdown {
         font-size: 18px !important;
         line-height: 1.6 !important;
         color: #212f3d !important;
     }
     
-    /* 數據指標卡片 */
-    div[data-testid="stMetricValue"] {
-        font-size: 32px !important;
-        color: #17202a !important;
-        font-weight: bold;
-    }
-    
-    /* 分析結論段落框 */
-    .analysis-text {
-        font-size: 18px;
-        font-weight: 500;
-        color: #2c3e50;
-        margin-top: 15px;
-        margin-bottom: 30px;
-        border: 2px solid #5d6d7e;
-        background-color: #ebf5fb;
+    /* 結論區塊樣式 */
+    .summary-box {
+        border: 2px solid #333;
         padding: 20px;
-        border-radius: 8px;
+        border-radius: 5px;
+        background-color: #fafafa;
+        margin-bottom: 20px;
     }
     
-    /* 隱藏表格索引行以節省空間 */
     thead tr th:first-child {display:none}
     tbody th {display:none}
     </style>
@@ -132,7 +117,7 @@ start_analysis = st.button("📄 生成正式分析報告", type="primary")
 # --- 4. 報告生成區 ---
 
 if start_analysis:
-    with st.spinner('正在彙整數據並生成圖表...'):
+    with st.spinner('正在進行深度數據洞察...'):
         time.sleep(1.0)
         
         # --- 資料處理 ---
@@ -190,7 +175,7 @@ if start_analysis:
             # ==========================================
             # 1. 總體績效
             # ==========================================
-            st.header("1. 總體績效概覽 (Executive Summary)")
+            st.header("1. 總體績效概覽")
             
             avg_oee_total = df["OEE"].mean()
             total_loss = df["總損失"].sum()
@@ -218,37 +203,23 @@ if start_analysis:
                 height=table_height
             )
 
-            # 排行榜 (橫向條形圖)
+            # 排行榜
             st.subheader(f"{group_col} 綜合實力排名")
-            
-            # 計算最大值以設定邊界
             max_oee = summary_agg["OEE"].max()
-            
             fig_rank = px.bar(
                 summary_agg.sort_values("OEE", ascending=True), 
                 x="OEE", y=group_col, orientation='h',
                 text="OEE", 
-                title=f"依平均 OEE 排序 (數值越高越好)"
+                title=f"依平均 OEE 排序"
             )
             fig_rank.update_traces(marker_color='#1f618d', texttemplate='%{text:.1%}', textposition='outside', textfont=dict(size=14, color='black'))
             fig_rank.update_layout(
                 plot_bgcolor='white', 
-                xaxis=dict(showgrid=True, gridcolor='#eee', range=[0, max_oee * 1.25]), # 【關鍵修正】預留 25% 空間
+                xaxis=dict(showgrid=True, gridcolor='#eee', range=[0, max_oee * 1.25]),
                 height=400, font=dict(size=14, color='black')
             )
             st.plotly_chart(fig_rank, use_container_width=True)
             
-            top_performer = summary_agg.iloc[0][group_col]
-            last_performer = summary_agg.iloc[-1][group_col]
-            
-            st.markdown(f"""
-            <div class="analysis-text">
-            <b>📈 數據解讀：</b><br>
-            根據數據彙整結果，<b>{top_performer}</b> 在本次分析區間內的綜合效率 (OEE) 表現最佳，為績效標竿。<br>
-            <b>{last_performer}</b> 的平均效率最低，建議優先檢查該單位的異常停機狀況或作業流程。
-            </div>
-            """, unsafe_allow_html=True)
-
             # ==========================================
             # 2. 趨勢與穩定性
             # ==========================================
@@ -259,33 +230,24 @@ if start_analysis:
                 cv_data = df.groupby(group_col)["OEE"].agg(['mean', 'std'])
                 cv_data['CV(%)'] = (cv_data['std'] / cv_data['mean']) * 100
                 cv_data = cv_data.fillna(0).reset_index().sort_values('CV(%)')
-                
-                # 計算最大值以設定邊界
                 max_cv = cv_data['CV(%)'].max()
 
                 fig_cv = px.bar(cv_data, x=group_col, y="CV(%)", text="CV(%)", title="OEE 波動率 (數值越低代表生產越穩定)")
                 fig_cv.update_traces(marker_color='#922b21', texttemplate='%{text:.1f}%', textposition='outside', textfont=dict(size=14, color='black'))
                 fig_cv.update_layout(
                     plot_bgcolor='white', 
-                    yaxis=dict(showgrid=True, gridcolor='#eee', range=[0, max_cv * 1.2]), # 【關鍵修正】預留 20% 頂部空間
+                    yaxis=dict(showgrid=True, gridcolor='#eee', range=[0, max_cv * 1.2]),
                     height=400, font=dict(size=14, color='black')
                 )
                 st.plotly_chart(fig_cv, use_container_width=True)
                 
-                most_stable = cv_data.iloc[0][group_col]
-                most_unstable = cv_data.iloc[-1][group_col]
-                
-                st.markdown(f"""
-                <div class="analysis-text">
-                <b>📈 數據解讀：</b><br>
-                <b>{most_stable}</b> 的 CV 值最低，顯示其每日生產表現最為穩定。<br>
-                <b>{most_unstable}</b> 的 CV 值最高，代表生產過程容易忽快忽慢，品質與產出較難預測，建議進行標準化作業輔導。
-                </div>
-                """, unsafe_allow_html=True)
+                st.markdown("""
+                **分析觀點：**
+                CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。
+                """)
             else:
                 st.info("數據量不足，無法分析波動率。")
 
-            # 相關性分析
             st.subheader("效率 vs 能耗 關聯分析")
             try:
                 fig_corr = px.scatter(
@@ -301,17 +263,13 @@ if start_analysis:
                     height=500, font=dict(size=14, color='black')
                 )
                 st.plotly_chart(fig_corr, use_container_width=True)
+                st.markdown("""
+                **分析觀點：**
+                此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為**右下角**。若出現位於**左上角**的異常點（低效率、高耗能），通常代表設備處於「空轉浪費」狀態，應查核當日日誌。
+                """)
             except:
                 fig_corr = px.scatter(df, x="OEE", y="單位能耗", color=group_col, size="產量")
                 st.plotly_chart(fig_corr, use_container_width=True)
-            
-            st.markdown(f"""
-            <div class="analysis-text">
-            <b>📈 數據解讀：</b><br>
-            圖表呈現了生產效率與電力消耗的關係。理想狀態應位於<b>右下角</b>（高 OEE、低單位能耗）。
-            若發現有數據點落於<b>左上角</b>（低 OEE、高單位能耗），代表該時段設備可能處於「空轉」或「低速運轉但全功率耗電」的異常狀態。
-            </div>
-            """, unsafe_allow_html=True)
 
             # ==========================================
             # 3. 電力耗能
@@ -319,7 +277,6 @@ if start_analysis:
             st.header("3. 電力耗能深度分析")
 
             col_p1, col_p2 = st.columns(2)
-
             with col_p1:
                 st.subheader("總耗電量佔比")
                 fig_pie = px.pie(summary_agg, values="耗電量", names=group_col, hole=0.4)
@@ -328,10 +285,7 @@ if start_analysis:
 
             with col_p2:
                 st.subheader("平均單位能耗 (kWh/雙)")
-                
-                # 計算最大值以設定邊界
                 max_unit = summary_agg["平均單位能耗"].max()
-
                 fig_unit = px.bar(
                     summary_agg.sort_values("平均單位能耗"), 
                     x=group_col, y="平均單位能耗", 
@@ -341,50 +295,106 @@ if start_analysis:
                 fig_unit.update_traces(marker_color='#145a32', texttemplate='%{text:.4f}', textposition='outside', textfont=dict(size=14, color='black'))
                 fig_unit.update_layout(
                     plot_bgcolor='white', 
-                    yaxis=dict(range=[0, max_unit * 1.2]), # 【關鍵修正】預留 20% 頂部空間
+                    yaxis=dict(range=[0, max_unit * 1.2]),
                     height=400, font=dict(size=14, color='black')
                 )
                 st.plotly_chart(fig_unit, use_container_width=True)
             
-            best_p = summary_agg.sort_values("平均單位能耗").iloc[0][group_col]
-            worst_p = summary_agg.sort_values("平均單位能耗").iloc[-1][group_col]
+            st.markdown("""
+            **分析觀點：**
+            單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化、傳動阻力過大或保溫失效等硬體問題，建議列入年度歲修重點。
+            """)
+
+            # ==========================================
+            # 4. 綜合診斷結論 (改版重點)
+            # ==========================================
+            st.header("4. 綜合診斷結論 (Executive Conclusion)")
+
+            # --- A. 分類運算 ---
+            excellent_machines = []
+            average_machines = []
+            critical_machines = []
+            
+            for index, row in summary_agg.iterrows():
+                name = row[group_col]
+                oee = row['OEE']
+                loss = row['總損失']
+                info = f"**{name}** (OEE: {oee:.1%}, 損失: ${loss:,.0f})"
+                
+                if oee >= target_oee/100:
+                    excellent_machines.append(info)
+                elif oee >= 0.70:
+                    average_machines.append(info)
+                else:
+                    critical_machines.append(info)
+            
+            # --- B. 診斷內容生成 ---
+            st.markdown("### 📌 現況總結")
+            status_summary = f"本次分析區間內，全廠平均 OEE 為 **{avg_oee_total:.1%}**。"
+            if avg_oee_total < 0.7:
+                status_summary += " 整體生產效率偏低，存在顯著改善空間，主要虧損來源於產能未達標造成的機會成本。"
+            elif avg_oee_total >= target_oee/100:
+                status_summary += " 整體生產效率優異，已達世界級水準。"
+            else:
+                status_summary += " 生產效率維持在一般水準，部分設備表現優異，但仍有落後設備拉低平均。"
             
             st.markdown(f"""
-            <div class="analysis-text">
-            <b>📈 數據解讀：</b><br>
-            <b>{best_p}</b> 的能源轉換效率最高，每生產一單位的產品耗電量最少。<br>
-            <b>{worst_p}</b> 的單位能耗最高，建議工程部門檢查其馬達效率、傳動系統阻力，或加熱系統的保溫效果是否老化。
+            <div class="summary-box">
+            {status_summary}
+            <br><br>
+            累計潛在財務損失總額： <b>NT$ {total_loss:,.0f}</b>
             </div>
             """, unsafe_allow_html=True)
 
-            # ==========================================
-            # 4. 結論
-            # ==========================================
-            st.header("4. 綜合診斷結論 (Conclusion)")
-            st.markdown(f"針對 {analysis_scope} 之綜合診斷結果：")
-
-            for index, row in summary_agg.iterrows():
-                target_name = row[group_col]
-                m_oee = row['OEE']
-                m_loss = row['總損失']
-                
-                if m_oee >= target_oee/100:
-                    status = "✅ 優良"
-                    action = "維持現狀，將其運作模式標準化，並作為其他單位的學習標竿。"
-                    color = "#2ecc71"
-                elif m_oee >= 0.70:
-                    status = "⚠️ 尚可"
-                    action = "需針對短暫停機進行分析，目標提升稼動率 5% 以上。"
-                    color = "#f1c40f"
+            st.markdown("### 🚦 分級診斷與矩陣表")
+            
+            # 準備矩陣表格資料
+            matrix_data = []
+            for m in summary_agg.to_dict('records'):
+                oee = m['OEE']
+                if oee >= target_oee/100:
+                    grade = "🟢 優良"
+                elif oee >= 0.70:
+                    grade = "🟡 尚可"
                 else:
-                    status = "❌ 異常"
-                    action = "為主要虧損來源，建議立即檢修設備，並審視排程規劃與人員操作手法。"
-                    color = "#e74c3c"
+                    grade = "🔴 異常"
+                matrix_data.append({
+                    "設備名稱": m[group_col],
+                    "平均 OEE": f"{m['OEE']:.1%}",
+                    "評級": grade,
+                    "財務損失佔比": f"{(m['總損失']/total_loss):.1%}" if total_loss > 0 else "0%"
+                })
+            
+            st.dataframe(pd.DataFrame(matrix_data), use_container_width=True, hide_index=True)
 
+            st.markdown("### 🚀 策略行動建議")
+
+            # 針對異常設備的建議 (合併寫法)
+            if critical_machines:
+                names = ", ".join([m.split(' ')[0].replace('*','') for m in critical_machines])
                 st.markdown(f"""
-                ### 🔧 {group_col}：{target_name}
-                * **狀態評估**：<span style='color:{color}; font-weight:bold'>{status}</span> (平均 OEE: {m_oee:.1%})
-                * **財務衝擊**：此期間累計潛在損失 **NT$ {m_loss:,.0f}**。
-                * **行動建議**：{action}
+                **1. 優先改善對象 (Priority Action):**
+                * **目標設備**：{names}
+                * **問題診斷**：上述設備 OEE 低於 70%，為拉低全廠效率的瓶頸，且佔據了主要的財務損失。
+                * **行動方案**：
+                    * 建議工程部門立即調閱這些設備的「異常停機代碼」，確認是設備故障頻繁還是換線等待時間過長。
+                    * 審視排程規劃，避免在這些低效設備上安排少量多樣的短單。
                 """)
-                st.markdown("---")
+            
+            # 針對普通設備的建議
+            if average_machines:
+                names = ", ".join([m.split(' ')[0].replace('*','') for m in average_machines])
+                st.markdown(f"""
+                **2. 效能提升計畫 (Improvement Plan):**
+                * **目標設備**：{names}
+                * **行動方案**：表現平穩但未達標竿。建議對照優良設備的參數設定 (Parameter)，進行參數優化微調，目標在下季將 OEE 提升 5-10%。
+                """)
+
+            # 針對優良設備的建議
+            if excellent_machines:
+                names = ", ".join([m.split(' ')[0].replace('*','') for m in excellent_machines])
+                st.markdown(f"""
+                **3. 標竿管理 (Benchmark):**
+                * **目標設備**：{names}
+                * **行動方案**：運作狀況極佳。建議將其操作標準書 (SOP) 與保養模式標準化，並作為內部教育訓練的示範教案。
+                """)
