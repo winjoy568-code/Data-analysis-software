@@ -6,4 +6,4 @@ jinja2
 matplotlib
 statsmodels
 python-docx
-kaleido
+kaleido==0.2.1
