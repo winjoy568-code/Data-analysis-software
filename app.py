@@ -174,4 +174,90 @@ if start_analysis:
                 st.markdown("**詳細數據排名 (依 OEE 排序)**")
                 
                 # 準備顯示表格
-                display_cols = ["日期", "廠別", "機台編號", "OEE", "產量", "單位能耗", "能源損失", "產
+                display_cols = ["日期", "廠別", "機台編號", "OEE", "產量", "單位能耗", "能源損失", "產能損失機會成本"]
+                final_table = df[display_cols].rename(columns={
+                    "OEE": "OEE(%)", "產量": "產量(雙)", 
+                    "能源損失": "電費浪費($)", "產能損失機會成本": "產能損失($)"
+                })
+                
+                # 顏色漸層顯示 (需要 jinja2 和 matplotlib)
+                try:
+                    st.dataframe(
+                        final_table.sort_values("OEE(%)", ascending=False).style
+                        .format({
+                            "OEE(%)": "{:.1%}", "單位能耗": "{:.5f}", 
+                            "電費浪費($)": "${:,.0f}", "產能損失($)": "${:,.0f}"
+                        })
+                        .background_gradient(subset=["OEE(%)"], cmap="RdYlGn"),
+                        use_container_width=True, hide_index=True
+                    )
+                except Exception as e:
+                    st.warning("⚠️ 表格顏色渲染失敗 (可能是缺少 jinja2)，顯示為標準表格。")
+                    st.dataframe(final_table, use_container_width=True)
+
+            # === Tab 2: 趨勢與相關性 ===
+            with tab2:
+                st.subheader("2. 生產穩定性與相關性")
+                c1, c2 = st.columns(2)
+                
+                with c1:
+                    # CV 圖
+                    if len(df) > 1:
+                        cv_data = df.groupby(group_col)["OEE"].agg(['mean', 'std'])
+                        cv_data['CV(%)'] = (cv_data['std'] / cv_data['mean']) * 100
+                        cv_data = cv_data.reset_index().sort_values('CV(%)')
+                        fig_cv = px.bar(cv_data, x=group_col, y="CV(%)", text="CV(%)", 
+                                      color="CV(%)", color_continuous_scale="Reds", 
+                                      title="OEE 波動率 (CV, 越低越穩)")
+                        fig_cv.update_traces(texttemplate='%{text:.1f}%')
+                        st.plotly_chart(fig_cv, use_container_width=True)
+                    else:
+                        st.info("ℹ️ 數據量不足，無法計算波動率")
+
+                with c2:
+                    # 相關性圖 (加入防護罩)
+                    try:
+                        fig_corr = px.scatter(
+                            df, x="OEE", y="單位能耗", 
+                            color=group_col, size="產量", 
+                            trendline="ols", # 這裡需要 statsmodels
+                            title="OEE vs 能耗相關性 (含趨勢預測)"
+                        )
+                        st.plotly_chart(fig_corr, use_container_width=True)
+                    except Exception as e:
+                        st.caption("⚠️ 數據點過少或缺少套件，顯示為標準散佈圖 (無趨勢線)")
+                        fig_corr = px.scatter(
+                            df, x="OEE", y="單位能耗", 
+                            color=group_col, size="產量",
+                            title="OEE vs 能耗相關性"
+                        )
+                        st.plotly_chart(fig_corr, use_container_width=True)
+
+            # === Tab 3: 成本 ===
+            with tab3:
+                st.subheader("3. 損失成本分析")
+                cost_agg = df.groupby(group_col)[["能源損失", "產能損失機會成本"]].sum().reset_index()
+                cost_agg["總損失"] = cost_agg["能源損失"] + cost_agg["產能損失機會成本"]
+                
+                fig_cost = px.bar(
+                    cost_agg.sort_values("總損失", ascending=False), 
+                    x=group_col, y=["能源損失", "產能損失機會成本"], 
+                    title="潛在損失金額分解 (NTD)", 
+                    barmode='stack',
+                    color_discrete_map={"能源損失": "#e74c3c", "產能損失機會成本": "#f39c12"}
+                )
+                st.plotly_chart(fig_cost, use_container_width=True)
+
+            # === Tab 4: 診斷 ===
+            with tab4:
+                st.subheader("4. AI 診斷報告")
+                if not cost_agg.empty:
+                    worst_machine = cost_agg.iloc[0][group_col]
+                    loss_val = cost_agg.iloc[0]['總損失']
+                    st.markdown(f"""
+                    ### ⚠️ 重點關注對象：{worst_machine}
+                    * **財務衝擊**：該設備在此期間造成的總潛在損失達 **NT$ {loss_val:,.0f}**。
+                    * **建議行動**：
+                        1. 檢查 {worst_machine} 的待機設定，避免空轉浪費電力。
+                        2. 檢討該設備是否經常發生短暫停機，導致 OEE 低落進而造成產能損失。
+                    """)
