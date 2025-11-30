@@ -7,4 +7,5 @@ matplotlib
 statsmodels
 python-docx
 kaleido==0.2.1
-fonts-noto-cjk
+
+
