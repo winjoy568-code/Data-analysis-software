@@ -4,3 +4,4 @@ plotly
 openpyxl
 jinja2
 matplotlib
+statsmodels
