@@ -10,7 +10,7 @@ from docx import Document
 from docx.shared import Inches, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# --- 1. 頁面設定 ---
+# --- 1. 頁面設定 (Ver 12.0 風格 - 通用字體) ---
 st.set_page_config(page_title="生產效能診斷報告", layout="centered")
 
 st.markdown("""
@@ -103,6 +103,7 @@ def smart_load_file(uploaded_file):
 def clean_text(text):
     """清除 HTML 標籤與 Markdown 符號"""
     if not isinstance(text, str): return str(text)
+    # 移除 <b>, </b>, **, * 等符號
     text = re.sub(r'</?b>', '', text)  # 移除 <b> </b>
     text = re.sub(r'\*\*', '', text)   # 移除 **
     text = re.sub(r'\*', '', text)     # 移除 *
@@ -129,9 +130,9 @@ def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     doc.add_heading('績效總表', level=2)
     table = doc.add_table(rows=1, cols=len(summary_agg.columns))
     table.style = 'Table Grid'
-    hdr_cells = table.rows[0].cells
     
     # 填寫表頭
+    hdr_cells = table.rows[0].cells
     columns = summary_agg.columns.tolist()
     for i, col_name in enumerate(columns): hdr_cells[i].text = str(col_name)
     
@@ -301,7 +302,7 @@ if start_analysis:
             table_height = (len(final_table) + 1) * 35 + 5
             st.dataframe(final_table.style.format({"平均OEE": "{:.1%}", "平均單位能耗": "{:.5f}", "潛在損失($)": "${:,.0f}", "總產量": "{:,.0f}", "總耗電": "{:,.1f}"}).background_gradient(subset=["平均OEE"], cmap="Blues"), use_container_width=True, height=table_height)
 
-            # 排行榜
+            # 排行榜 (修復黑白問題：強制指定顏色)
             st.subheader(f"{group_col} 綜合實力排名")
             max_oee = summary_agg["OEE"].max()
             fig_rank = px.bar(
@@ -310,6 +311,7 @@ if start_analysis:
                 text="OEE", 
                 title=f"依平均 OEE 排序"
             )
+            # 強制指定 marker_color 為深藍色
             fig_rank.update_traces(marker_color='#1f618d', texttemplate='%{text:.1%}', textposition='outside', textfont=dict(size=14, color='black'))
             fig_rank.update_layout(
                 plot_bgcolor='white', 
@@ -319,9 +321,7 @@ if start_analysis:
             )
             st.plotly_chart(fig_rank, use_container_width=True)
             figures['rank'] = fig_rank
-            
             texts['rank_insight'] = f"根據數據彙整，**{summary_agg.iloc[0][group_col]}** 表現最佳。**{summary_agg.iloc[-1][group_col]}** 效率最低，建議優先改善。"
-            st.markdown(f"""<div class="analysis-text"><b>📈 數據解讀：</b><br>{texts['rank_insight']}</div>""", unsafe_allow_html=True)
             
             # 2. 趨勢
             st.header("2. 生產趨勢與穩定性分析")
@@ -333,6 +333,7 @@ if start_analysis:
                 max_cv = cv_data['CV(%)'].max()
 
                 fig_cv = px.bar(cv_data, x=group_col, y="CV(%)", text="CV(%)", title="OEE 波動率")
+                # 強制指定紅色
                 fig_cv.update_traces(marker_color='#922b21', texttemplate='%{text:.1f}%', textposition='outside', textfont=dict(size=14, color='black'))
                 fig_cv.update_layout(
                     plot_bgcolor='white', 
@@ -343,12 +344,13 @@ if start_analysis:
                 st.plotly_chart(fig_cv, use_container_width=True)
                 figures['cv'] = fig_cv
                 texts['cv_insight'] = f"**{cv_data.iloc[0][group_col]}** 生產最穩定 (CV最低)。"
-                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。</div>""", unsafe_allow_html=True)
+                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。</div>""", unsafe_allow_html=True)
             else:
                 st.info("數據量不足，無法分析波動率。")
 
             st.subheader("效率 vs 能耗 關聯分析")
             try:
+                # 強制彩色 (Set1)
                 fig_corr = px.scatter(
                     df, x="OEE", y="單位能耗", 
                     color=group_col, size="產量", 
@@ -365,7 +367,7 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_corr, use_container_width=True)
                 figures['corr'] = fig_corr
-                texts['corr_insight'] = "此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為<b>右下角</b>。若出現位於<b>左上角</b>的異常點，通常代表設備處於「空轉浪費」狀態。"
+                texts['corr_insight'] = "此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為<b>右下角</b>。若出現位於<b>左上角</b>的異常點（低效率、高耗能），通常代表設備處於「空轉浪費」狀態，應查核當日日誌。"
                 st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['corr_insight']}</div>""", unsafe_allow_html=True)
             except:
                 fig_corr = px.scatter(df, x="OEE", y="單位能耗", color=group_col, size="產量")
@@ -391,6 +393,7 @@ if start_analysis:
                     text="平均單位能耗",
                     title="平均耗電"
                 )
+                # 強制綠色
                 fig_unit.update_traces(marker_color='#145a32', texttemplate='%{text:.4f}', textposition='outside', textfont=dict(size=14, color='black'))
                 fig_unit.update_layout(
                     plot_bgcolor='white', 
@@ -401,7 +404,7 @@ if start_analysis:
                 st.plotly_chart(fig_unit, use_container_width=True)
                 figures['unit'] = fig_unit
             texts['unit_insight'] = f"**{summary_agg.sort_values('平均單位能耗').iloc[0][group_col]}** 能源轉換效率最高。"
-            st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化或傳動阻力過大。</div>""", unsafe_allow_html=True)
+            st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化、傳動阻力過大或保溫失效等硬體問題，建議列入年度歲修重點。</div>""", unsafe_allow_html=True)
 
             # 4. 結論
             st.header("4. 綜合診斷結論")
