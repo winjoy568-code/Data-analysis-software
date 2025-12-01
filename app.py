@@ -12,6 +12,7 @@ import re
 # ==========================================
 # 0. 系統設定與 CSS (UI Layer)
 # ==========================================
+# ⚠️ 注意：這行必須是第一個 Streamlit 指令，絕對不能移動
 st.set_page_config(page_title="生產效能智慧分析系統 Pro", layout="centered")
 
 st.markdown("""
@@ -426,6 +427,20 @@ def main():
             # 3. 結論
             st.header("3. 綜合診斷與建議")
             st.markdown(texts_res['action_plan'])
+
+# 補上 smart_load_file (避免 main 找不到)
+def smart_load_file(uploaded_file):
+    try:
+        if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file)
+        else: df = pd.read_excel(uploaded_file)
+        # ... (這裡沿用 DataEngine 的邏輯，但為了介面讀取方便，簡單處理)
+        rename_map = {"用電量(kWh)": "耗電量", "產量(雙)": "產量", "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"}
+        for user_col, sys_col in rename_map.items():
+            if user_col in df.columns: df = df.rename(columns={user_col: sys_col})
+        if "日期" in df.columns: df["日期"] = pd.to_datetime(df["日期"]).dt.date
+        if "廠別" not in df.columns: df["廠別"] = "匯入廠區"
+        return df, "OK"
+    except Exception as e: return None, str(e)
 
 if __name__ == "__main__":
     main()
