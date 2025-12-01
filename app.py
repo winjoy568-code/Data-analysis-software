@@ -448,6 +448,7 @@ def smart_load_file(uploaded_file):
     try:
         if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file)
         else: df = pd.read_excel(uploaded_file)
+        # ... (這裡沿用 DataEngine 的邏輯，但為了介面讀取方便，簡單處理)
         rename_map = {"用電量(kWh)": "耗電量", "產量(雙)": "產量", "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"}
         for user_col, sys_col in rename_map.items():
             if user_col in df.columns: df = df.rename(columns={user_col: sys_col})
