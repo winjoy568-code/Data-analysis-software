@@ -18,6 +18,7 @@ st.markdown("""
     <style>
     .main { background-color: #ffffff; }
     
+    /* 規格 5.1: 全域通用字體 */
     html, body, [class*="css"] {
         font-family: Arial, sans-serif;
         color: #000000;
@@ -30,9 +31,11 @@ st.markdown("""
     p, li, .stMarkdown { font-size: 16px !important; line-height: 1.7 !important; color: #212f3d !important; }
     div[data-testid="stMetricValue"] { font-size: 28px !important; color: #17202a !important; font-weight: bold; }
     
+    /* 規格 5.2: 視覺元件樣式 */
     .insight-box { border: 1px solid #d6eaf8; background-color: #ebf5fb; padding: 15px; border-radius: 5px; margin-top: 10px; margin-bottom: 20px; }
     .summary-box { border: 2px solid #566573; background-color: #fdfefe; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
     
+    /* 表格優化 */
     thead tr th:first-child {display:none} tbody th {display:none}
     div.stButton > button:first-child { width: 100%; height: 3em; font-weight: bold; }
     </style>
@@ -46,7 +49,7 @@ class DataEngine:
     def clean_and_process(df_raw, params):
         df = df_raw.copy()
         
-        # 1. 欄位映射
+        # 1. 智慧欄位映射
         rename_map = {
             "用電量(kWh)": "耗電量", "產量(雙)": "產量", 
             "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"
@@ -118,16 +121,24 @@ class InsightEngine:
         best_machine = summary_agg.iloc[0]
         worst_machine = summary_agg.iloc[-1]
         
-        eff_gap_pct = 0
-        if best_machine['平均單位能耗'] > 0:
-            eff_gap_pct = ((worst_machine['平均單位能耗'] - best_machine['平均單位能耗']) / best_machine['平均單位能耗']) * 100
-            
+        energy_gap_msg = ""
+        if best_machine['平均單位能耗'] > 0 and worst_machine['平均單位能耗'] > 0:
+            ratio = worst_machine['平均單位能耗'] / best_machine['平均單位能耗']
+            energy_gap_msg = f"比冠軍機台多消耗了 **{ratio:.1f} 倍** 的電力"
+        
+        # 3. 產能潛力預估
+        potential_prod = 0
+        margin = params['product_margin']
+        if worst_machine['OEE'] > 0:
+            potential_prod = (best_machine['OEE'] - worst_machine['OEE']) / worst_machine['OEE'] * worst_machine['產量']
+        potential_revenue = potential_prod * margin
+        
         texts['benchmark_analysis'] = f"""
-        * **標竿設備 ({best_machine[group_col]})**：表現最佳，平均 OEE 達 **{best_machine['OEE']:.1%}**，為本次分析之冠軍機台。
-        * **瓶頸設備 ({worst_machine[group_col]})**：表現最弱，單位生產成本比標竿高出 **{eff_gap_pct:.1f}%**，是主要的成本浪費來源。
+        * **標竿設備 ({best_machine[group_col]})**：表現最佳，平均 OEE 達 **{best_machine['OEE']:.1%}**，單位能耗最低 ({best_machine['平均單位能耗']:.5f} kWh/雙)。
+        * **瓶頸設備 ({worst_machine[group_col]})**：{energy_gap_msg}。若能將其效率提升至標竿水準，本期間預計可額外生產 **{potential_prod:,.0f} 雙**，相當於挽回 **NT$ {potential_revenue:,.0f}** 的營收損失。
         """
         
-        # 3. 穩定性分析
+        # 4. 穩定性分析
         cv_text = "數據量不足以計算波動率。"
         if len(df) > 1:
             cv_series = df.groupby(group_col)["OEE"].std() / df.groupby(group_col)["OEE"].mean()
@@ -136,7 +147,7 @@ class InsightEngine:
             cv_text = f"**{most_stable}** 生產節奏最穩定 (CV最低)；**{most_unstable}** 波動最大，顯示製程或人員操作存在變異。"
         texts['stability_analysis'] = cv_text
         
-        # 4. 策略行動建議
+        # 5. 策略行動建議
         crit_list, avg_list, good_list = [], [], []
         for _, row in summary_agg.iterrows():
             name = row[group_col]
@@ -146,7 +157,7 @@ class InsightEngine:
             
         action_text = ""
         if crit_list:
-            action_text += f"🔴 **優先改善 (Priority)**：{', '.join(crit_list)}\n   * 問題：OEE 低於 70%，可能存在空轉浪費。\n   * 行動：立即調閱異常停機代碼，檢查是否有「待機未關機」情況。\n\n"
+            action_text += f"🔴 **優先改善 (Priority)**：{', '.join(crit_list)}\n   * 問題：OEE 低於 70%，效率偏低。\n   * 行動：立即調閱異常停機代碼，檢查是否有「待機未關機」或「頻繁短停機」。\n\n"
         if avg_list:
             action_text += f"🟡 **效能提升 (Improvement)**：{', '.join(avg_list)}\n   * 問題：表現平穩但未達標竿。\n   * 行動：微調參數 (速度/溫度)，目標提升 5-10% 稼動率。\n\n"
         if good_list:
