@@ -10,7 +10,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import re
 
 # ==========================================
-# 0. 系統設定 (System Config)
+# 0. 系統設定與 CSS (System Config)
 # ==========================================
 st.set_page_config(page_title="生產效能智慧分析系統 Pro", layout="centered")
 
@@ -35,7 +35,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. Data Engine (數據處理核心) - 必須放在 Main 之前
+# 1. Data Engine (數據處理核心)
 # ==========================================
 class DataEngine:
     @staticmethod
@@ -159,7 +159,7 @@ class VizEngine:
         )
 
     @staticmethod
-    def plot_rank(summary_agg, group_col):
+    def create_rank_chart(summary_agg, group_col):
         fig = px.bar(
             summary_agg.sort_values("OEE", ascending=True),
             x="OEE", y=group_col, orientation='h', text="OEE",
@@ -171,7 +171,7 @@ class VizEngine:
         return fig
 
     @staticmethod
-    def plot_cv(df, group_col):
+    def create_cv_chart(df, group_col):
         cv_data = df.groupby(group_col)["OEE"].agg(['mean', 'std'])
         cv_data['CV'] = (cv_data['std'] / cv_data['mean']) * 100
         cv_data = cv_data.fillna(0).reset_index()
@@ -183,7 +183,7 @@ class VizEngine:
         return fig
 
     @staticmethod
-    def plot_scatter(df, group_col):
+    def create_scatter_chart(df, group_col):
         try:
             fig = px.scatter(
                 df, x="OEE", y="單位能耗", color=group_col, size="產量",
@@ -200,7 +200,7 @@ class VizEngine:
         return fig
 
     @staticmethod
-    def plot_dual_axis(df, group_col):
+    def create_dual_axis_chart(df, group_col):
         df_sorted = df.sort_values(["日期", group_col])
         x_label = df_sorted["日期"].astype(str) + " " + df_sorted[group_col]
         
@@ -287,15 +287,6 @@ class ReportEngine:
 # ==========================================
 # 5. Main App (主程式邏輯)
 # ==========================================
-def init_session_state():
-    if 'input_data' not in st.session_state:
-        st.session_state.input_data = pd.DataFrame([
-            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 50.1, "產量(雙)": 2009.5, "用電量(kWh)": 6.2},
-            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO4", "OEE(%)": 55.4, "產量(雙)": 4416.5, "用電量(kWh)": 9.1},
-            {"日期": "2025-11-18", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 48.5, "產量(雙)": 1950.0, "用電量(kWh)": 6.0},
-        ])
-        st.session_state.input_data['日期'] = pd.to_datetime(st.session_state.input_data['日期']).dt.date
-
 def main():
     # --- Input Section ---
     st.markdown("### 📥 數據輸入控制台")
@@ -339,7 +330,6 @@ def main():
     # --- Action Section ---
     col_run, col_export = st.columns([1, 1])
     
-    # 預先計算 (為了讓匯出按鈕能與分析按鈕同時存在)
     data_ready = False
     if not edited_df.empty:
         df_res, summary_res, scope_res = DataEngine.clean_and_process(edited_df, params)
@@ -374,7 +364,6 @@ def main():
             st.markdown("---")
             st.title("生產效能診斷分析報告")
             
-            # 1. 總覽
             st.header("1. 總體績效概覽")
             st.markdown(f'<div class="insight-box">{texts_res["kpi_summary"]}</div>', unsafe_allow_html=True)
             
@@ -386,7 +375,6 @@ def main():
             st.plotly_chart(figs_res['rank'], use_container_width=True)
             st.markdown(f'<div class="analysis-text">{texts_res["benchmark_analysis"]}</div>', unsafe_allow_html=True)
             
-            # 2. 趨勢與穩定性
             st.header("2. 生產趨勢與穩定性")
             c1, c2 = st.columns(2)
             with c1: 
@@ -399,9 +387,30 @@ def main():
             st.subheader("產量與能耗趨勢")
             st.plotly_chart(figs_res['dual'], use_container_width=True)
             
-            # 3. 結論
             st.header("3. 綜合診斷與建議")
             st.markdown(texts_res['action_plan'])
+
+# 補上 smart_load_file (避免 main 找不到)
+def init_session_state():
+    if 'input_data' not in st.session_state:
+        st.session_state.input_data = pd.DataFrame([
+            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 50.1, "產量(雙)": 2009.5, "用電量(kWh)": 6.2},
+            {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO4", "OEE(%)": 55.4, "產量(雙)": 4416.5, "用電量(kWh)": 9.1},
+            {"日期": "2025-11-18", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 48.5, "產量(雙)": 1950.0, "用電量(kWh)": 6.0},
+        ])
+        st.session_state.input_data['日期'] = pd.to_datetime(st.session_state.input_data['日期']).dt.date
+
+def smart_load_file(uploaded_file):
+    try:
+        if uploaded_file.name.endswith('.csv'): df = pd.read_csv(uploaded_file)
+        else: df = pd.read_excel(uploaded_file)
+        rename_map = {"用電量(kWh)": "耗電量", "產量(雙)": "產量", "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"}
+        for user_col, sys_col in rename_map.items():
+            if user_col in df.columns: df = df.rename(columns={user_col: sys_col})
+        if "日期" in df.columns: df["日期"] = pd.to_datetime(df["日期"]).dt.date
+        if "廠別" not in df.columns: df["廠別"] = "匯入廠區"
+        return df, "OK"
+    except Exception as e: return None, str(e)
 
 if __name__ == "__main__":
     main()
