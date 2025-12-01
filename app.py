@@ -90,7 +90,7 @@ def smart_load_file(uploaded_file):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-# --- Word 生成引擎 (Ver 16.1 修正版：針對欄位格式化) ---
+# --- Word 生成引擎 (Ver 16.1 修正版：格式化數據) ---
 def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     doc = Document()
     style = doc.styles['Normal']
@@ -115,7 +115,7 @@ def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     
     # 填寫表頭
     hdr_cells = table.rows[0].cells
-    columns = summary_agg.columns.tolist() # 取得欄位名稱列表
+    columns = summary_agg.columns.tolist()
     for i, col_name in enumerate(columns): 
         hdr_cells[i].text = str(col_name)
     
@@ -123,28 +123,19 @@ def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     for index, row in summary_agg.iterrows():
         row_cells = table.add_row().cells
         for i, val in enumerate(row):
-            col_name = columns[i] # 取得當前格子的欄位名稱
-            
-            # --- 格式化邏輯開始 ---
+            col_name = columns[i]
             if "OEE" in col_name:
-                # OEE 轉百分比 (例: 60.5%)
                 row_cells[i].text = f"{val:.1%}" if isinstance(val, float) else str(val)
-            elif "平均單位能耗" in col_name or "單位能耗" in col_name:
-                # 能耗保留5位小數 (例: 0.00314)
+            elif "單位能耗" in col_name:
                 row_cells[i].text = f"{val:.5f}" if isinstance(val, float) else str(val)
             elif "產量" in col_name or "損失" in col_name:
-                # 金額與產量加千分位，不留小數 (例: 10,000)
                 row_cells[i].text = f"{val:,.0f}" if isinstance(val, (int, float)) else str(val)
             elif "耗電量" in col_name:
-                # 耗電量保留1位小數 (例: 153.4)
                 row_cells[i].text = f"{val:,.1f}" if isinstance(val, float) else str(val)
             elif isinstance(val, float):
-                # 其他小數預設兩位
                 row_cells[i].text = f"{val:.2f}"
             else:
-                # 文字直接顯示
                 row_cells[i].text = str(val)
-            # --- 格式化邏輯結束 ---
 
     # 安全插入圖片函數
     def safe_add_image(key, title):
@@ -339,8 +330,8 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_cv, use_container_width=True)
                 figures['cv'] = fig_cv
-                texts['cv_insight'] = "CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。"
-                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['cv_insight']}</div>""", unsafe_allow_html=True)
+                texts['cv_insight'] = f"**{cv_data.iloc[0][group_col]}** 生產最穩定 (CV最低)。"
+                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。</div>""", unsafe_allow_html=True)
             else:
                 st.info("數據量不足，無法分析波動率。")
 
