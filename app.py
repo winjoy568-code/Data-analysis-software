@@ -429,3 +429,39 @@ if start_analysis:
             
             st.markdown("### 📌 現況總結")
             status_summary = f"本次分析區間內 ({start_date} 至 {end_date})，全廠平均 OEE 為 **{avg_oee_total:.1%}**。"
+            if avg_oee_total < 0.7: status_summary += " 整體效率偏低，存在改善空間。"
+            else: status_summary += " 整體效率表現尚可。"
+            
+            texts['conclusion_summary'] = f"{status_summary}\n累計潛在財務損失總額：NT$ {total_loss:,.0f}。"
+            st.markdown(f'<div class="summary-box">{texts["conclusion_summary"]}</div>', unsafe_allow_html=True)
+
+            st.markdown("### 🚦 分級診斷與矩陣表")
+            st.dataframe(pd.DataFrame(matrix_data), use_container_width=True, hide_index=True)
+
+            st.markdown("### 🚀 策略行動建議")
+            action_text = ""
+            if crit_list:
+                names = ", ".join(crit_list)
+                action_text += f"**1. 優先改善對象 (Priority Action):**\n* 目標設備：{names}\n* 行動方案：OEE低於70%，建議立即檢查異常停機代碼。\n\n"
+            if avg_list:
+                names = ", ".join(avg_list)
+                action_text += f"**2. 效能提升計畫 (Improvement Plan):**\n* 目標設備：{names}\n* 行動方案：表現平穩但未達標竿。建議微調參數，目標提升 5-10% 稼動率。\n\n"
+            if good_list:
+                names = ", ".join(good_list)
+                action_text += f"**3. 標竿管理 (Benchmark):**\n* 目標設備：{names}\n* 行動方案：運作狀況極佳。建議將其操作標準書 (SOP) 與保養模式標準化。\n"
+            
+            texts['conclusion_action'] = action_text
+            st.markdown(action_text)
+
+            # --- Word 下載按鈕 ---
+            st.markdown("---")
+            st.subheader("📥 匯出報告")
+            
+            doc_file = generate_word_report(df, summary_agg, figures, texts, analysis_scope)
+            
+            st.download_button(
+                label="下載 Word 分析報告 (.docx)",
+                data=doc_file.getvalue(),
+                file_name=f"生產效能分析報告_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
