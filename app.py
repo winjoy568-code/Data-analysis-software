@@ -90,7 +90,7 @@ def smart_load_file(uploaded_file):
         return df, "OK"
     except Exception as e: return None, str(e)
 
-# --- Word 生成引擎 (Ver 16.1: 修正數字格式) ---
+# --- Word 生成引擎 (Ver 16.1 修正版：針對欄位格式化) ---
 def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     doc = Document()
     style = doc.styles['Normal']
@@ -115,27 +115,36 @@ def generate_word_report(df, summary_agg, figures, texts, analysis_scope):
     
     # 填寫表頭
     hdr_cells = table.rows[0].cells
-    columns = summary_agg.columns.tolist()
+    columns = summary_agg.columns.tolist() # 取得欄位名稱列表
     for i, col_name in enumerate(columns): 
         hdr_cells[i].text = str(col_name)
     
-    # 填寫數據 (格式修正邏輯)
+    # 填寫數據 (針對欄位名稱做特殊格式化)
     for index, row in summary_agg.iterrows():
         row_cells = table.add_row().cells
         for i, val in enumerate(row):
-            col_name = columns[i]
+            col_name = columns[i] # 取得當前格子的欄位名稱
+            
+            # --- 格式化邏輯開始 ---
             if "OEE" in col_name:
+                # OEE 轉百分比 (例: 60.5%)
                 row_cells[i].text = f"{val:.1%}" if isinstance(val, float) else str(val)
-            elif "單位能耗" in col_name:
+            elif "平均單位能耗" in col_name or "單位能耗" in col_name:
+                # 能耗保留5位小數 (例: 0.00314)
                 row_cells[i].text = f"{val:.5f}" if isinstance(val, float) else str(val)
             elif "產量" in col_name or "損失" in col_name:
+                # 金額與產量加千分位，不留小數 (例: 10,000)
                 row_cells[i].text = f"{val:,.0f}" if isinstance(val, (int, float)) else str(val)
             elif "耗電量" in col_name:
+                # 耗電量保留1位小數 (例: 153.4)
                 row_cells[i].text = f"{val:,.1f}" if isinstance(val, float) else str(val)
             elif isinstance(val, float):
+                # 其他小數預設兩位
                 row_cells[i].text = f"{val:.2f}"
             else:
+                # 文字直接顯示
                 row_cells[i].text = str(val)
+            # --- 格式化邏輯結束 ---
 
     # 安全插入圖片函數
     def safe_add_image(key, title):
@@ -331,7 +340,7 @@ if start_analysis:
                 st.plotly_chart(fig_cv, use_container_width=True)
                 figures['cv'] = fig_cv
                 texts['cv_insight'] = "CV 值越低代表該設備的生產節奏越穩定，品質控制能力越好。若 CV 值過高 (>15%)，建議優先檢查該設備的進料狀況或操作人員是否頻繁更換。"
-                st.markdown(f\"\"\"<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['cv_insight']}</div>\"\"\", unsafe_allow_html=True)
+                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['cv_insight']}</div>""", unsafe_allow_html=True)
             else:
                 st.info("數據量不足，無法分析波動率。")
 
@@ -354,7 +363,7 @@ if start_analysis:
                 st.plotly_chart(fig_corr, use_container_width=True)
                 figures['corr'] = fig_corr
                 texts['corr_insight'] = "此圖表用於檢視「高效率是否伴隨低能耗」。理想落點為<b>右下角</b>。若出現位於<b>左上角</b>的異常點（低效率、高耗能），通常代表設備處於「空轉浪費」狀態，應查核當日日誌。"
-                st.markdown(f\"\"\"<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['corr_insight']}</div>\"\"\", unsafe_allow_html=True)
+                st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['corr_insight']}</div>""", unsafe_allow_html=True)
             except:
                 fig_corr = px.scatter(df, x="OEE", y="單位能耗", color=group_col, size="產量")
                 st.plotly_chart(fig_corr, use_container_width=True)
@@ -388,8 +397,8 @@ if start_analysis:
                 )
                 st.plotly_chart(fig_unit, use_container_width=True)
                 figures['unit'] = fig_unit
-            texts['unit_insight'] = "單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化、傳動阻力過大或保溫失效等硬體問題，建議列入年度歲修重點。"
-            st.markdown(f\"\"\"<div class="analysis-text"><b>📈 分析觀點：</b><br>{texts['unit_insight']}</div>\"\"\", unsafe_allow_html=True)
+            texts['unit_insight'] = f"**{summary_agg.sort_values('平均單位能耗').iloc[0][group_col]}** 能源轉換效率最高。"
+            st.markdown(f"""<div class="analysis-text"><b>📈 分析觀點：</b><br>單位能耗反映了設備的能源轉換效率。數值過高的設備，可能存在馬達老化、傳動阻力過大或保溫失效等硬體問題，建議列入年度歲修重點。</div>""", unsafe_allow_html=True)
 
             # 4. 結論
             st.header("4. 綜合診斷結論")
