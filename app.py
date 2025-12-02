@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import numpy as np
+import time  # <--- 補上這個遺失的模組
 from io import BytesIO
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor
@@ -18,13 +19,17 @@ st.markdown("""
     <style>
     .main { background-color: #ffffff; }
     html, body, [class*="css"] { font-family: Arial, sans-serif; color: #000000; }
+    
     h1 { color: #000000; font-weight: 900; font-size: 2.4em; text-align: center; border-bottom: 4px solid #2c3e50; padding-bottom: 15px; margin-bottom: 30px; }
     h2 { color: #1a5276; border-left: 7px solid #1a5276; padding-left: 12px; margin-top: 40px; font-size: 1.6em; font-weight: bold; background-color: #f8f9fa; padding-top: 5px; padding-bottom: 5px; }
     h3 { color: #2e4053; margin-top: 25px; font-size: 1.3em; font-weight: 700; }
+    
     p, li, .stMarkdown { font-size: 16px !important; line-height: 1.7 !important; color: #212f3d !important; }
     div[data-testid="stMetricValue"] { font-size: 28px !important; color: #17202a !important; font-weight: bold; }
+    
     .insight-box { border: 1px solid #d6eaf8; background-color: #ebf5fb; padding: 15px; border-radius: 5px; margin-top: 10px; margin-bottom: 20px; }
     .summary-box { border: 2px solid #566573; background-color: #fdfefe; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+    
     thead tr th:first-child {display:none} tbody th {display:none}
     div.stButton > button:first-child { width: 100%; height: 3em; font-weight: bold; }
     </style>
@@ -307,10 +312,21 @@ def main():
     uploaded_file = st.file_uploader("匯入生產報表 (Excel/CSV)", type=["xlsx", "csv"], label_visibility="collapsed")
     
     init_session_state()
+    
     if uploaded_file:
-        df_new, status = smart_load_file(uploaded_file)
-        if status == "OK": st.session_state.input_data = df_new
-        else: st.error(f"檔案讀取失敗: {status}")
+        try:
+            if uploaded_file.name.endswith('.csv'): 
+                df_new = pd.read_csv(uploaded_file)
+            else: 
+                df_new = pd.read_excel(uploaded_file)
+            
+            rename_map = {"用電量(kWh)": "耗電量", "產量(雙)": "產量", "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"}
+            for user_col, sys_col in rename_map.items():
+                if user_col in df_new.columns: df_new = df_new.rename(columns={user_col: sys_col})
+            
+            st.session_state.input_data = df_new
+        except:
+            st.error("檔案讀取失敗，請檢查格式。")
 
     edited_df = st.data_editor(st.session_state.input_data, num_rows="dynamic", use_container_width=True)
     
@@ -334,26 +350,27 @@ def main():
     col_run, col_export = st.columns([1, 1])
     
     data_ready = False
-    # 變數預設為 None
+    # 預先定義變數，避免 UnboundLocalError
     df_res, summary_res, scope_res, texts_res, figs_res = None, None, None, None, {}
 
     if not edited_df.empty:
         try:
             df_res, summary_res, scope_res = DataEngine.clean_and_process(edited_df, params)
-            # 這裡加上檢查：如果 DataEngine 回傳了錯誤訊息 (str)，則不要繼續
-            if isinstance(scope_res, str) and "缺少" in scope_res:
-                st.warning(scope_res) # 顯示缺少欄位的警告
-            elif df_res is not None:
+            if df_res is not None and summary_res is not None:
                 data_ready = True
-                texts_res = InsightEngine.generate_narrative(df_res, summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號", params)
+                texts_res = InsightEngine.generate_narrative(df_res, summary_res, 
+                                                           "廠別" if scope_res=="跨廠區分析" else "機台編號", 
+                                                           params)
                 figs_res = {
                     'rank': VizEngine.create_rank_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
                     'cv': VizEngine.create_cv_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
                     'scatter': VizEngine.create_scatter_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
                     'dual': VizEngine.create_dual_axis_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號")
                 }
+            elif isinstance(scope_res, str): # 如果 DataEngine 回傳錯誤訊息
+                st.warning(scope_res)
         except Exception as e:
-            st.error(f"數據處理時發生錯誤: {e}")
+            st.error(f"數據處理錯誤: {e}")
 
     with col_run:
         start_btn = st.button("🚀 啟動全方位分析", type="primary")
@@ -362,48 +379,49 @@ def main():
         if data_ready:
             try:
                 docx = ReportEngine.generate_docx(df_res, summary_res, texts_res, figs_res, scope_res)
-                st.download_button("📥 下載 Word 報告", docx.getvalue(), f"生產效能報告_{pd.Timestamp.now().strftime('%Y%m%d')}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                st.download_button("📥 下載 Word 報告", docx.getvalue(), 
+                                 f"生產效能報告_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
+                                 "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             except Exception as e:
-                st.error(f"準備匯出檔案時發生錯誤: {e}")
+                st.error(f"匯出失敗: {e}")
         else:
             st.button("📥 下載 Word 報告", disabled=True)
 
     # --- Display Section ---
-    if start_btn:
-        if data_ready:
-            try:
-                with st.spinner('正在進行深度診斷...'):
-                    time.sleep(0.5)
-                    st.markdown("---")
-                    st.title("生產效能診斷分析報告")
-                    
-                    st.header("1. 總體績效概覽")
-                    st.markdown(f'<div class="insight-box">{texts_res["kpi_summary"]}</div>', unsafe_allow_html=True)
-                    
-                    st.subheader("績效總表")
-                    st.dataframe(summary_res.style.format({"OEE": "{:.1%}", "平均單位能耗": "{:.5f}", "總損失": "${:,.0f}"}).background_gradient(subset=["OEE"], cmap="Blues"), use_container_width=True)
-                    
-                    st.plotly_chart(figs_res['rank'], use_container_width=True)
-                    st.markdown(f'<div class="analysis-text">{texts_res["benchmark_analysis"]}</div>', unsafe_allow_html=True)
-                    
-                    st.header("2. 生產趨勢與穩定性")
-                    c1, c2 = st.columns(2)
-                    with c1: 
-                        st.plotly_chart(figs_res['cv'], use_container_width=True)
-                        st.markdown(f'<div class="analysis-text">{texts_res["stability_analysis"]}</div>', unsafe_allow_html=True)
-                    with c2: 
-                        st.plotly_chart(figs_res['scatter'], use_container_width=True)
-                        st.markdown('<div class="analysis-text">理想落點為<b>右下角</b> (高效率低能耗)。</div>', unsafe_allow_html=True)
-                        
-                    st.subheader("產量與能耗趨勢")
-                    st.plotly_chart(figs_res['dual'], use_container_width=True)
-                    
-                    st.header("3. 綜合診斷與建議")
-                    st.markdown(texts_res['action_plan'])
-            except Exception as e:
-                st.error(f"顯示分析結果時發生錯誤: {e}")
-        else:
-            st.warning("請先輸入正確的數據並確保欄位齊全（需包含：日期、機台編號、OEE、產量、耗電量）。")
+    if start_btn and data_ready:
+        with st.spinner('正在進行深度診斷...'):
+            time.sleep(0.5)
+            st.markdown("---")
+            st.title("生產效能診斷分析報告")
+            
+            # 1. 總覽
+            st.header("1. 總體績效概覽")
+            st.markdown(f'<div class="insight-box">{texts_res["kpi_summary"]}</div>', unsafe_allow_html=True)
+            
+            st.subheader("績效總表")
+            st.dataframe(summary_res.style.format({
+                "OEE": "{:.1%}", "平均單位能耗": "{:.5f}", "總損失": "${:,.0f}"
+            }).background_gradient(subset=["OEE"], cmap="Blues"), use_container_width=True)
+            
+            st.plotly_chart(figs_res['rank'], use_container_width=True)
+            st.markdown(f'<div class="analysis-text">{texts_res["benchmark_analysis"]}</div>', unsafe_allow_html=True)
+            
+            # 2. 趨勢與穩定性
+            st.header("2. 生產趨勢與穩定性")
+            c1, c2 = st.columns(2)
+            with c1: 
+                st.plotly_chart(figs_res['cv'], use_container_width=True)
+                st.markdown(f'<div class="analysis-text">{texts_res["stability_analysis"]}</div>', unsafe_allow_html=True)
+            with c2: 
+                st.plotly_chart(figs_res['scatter'], use_container_width=True)
+                st.markdown('<div class="analysis-text">理想落點為<b>右下角</b> (高效率低能耗)。</div>', unsafe_allow_html=True)
+                
+            st.subheader("產量與能耗趨勢")
+            st.plotly_chart(figs_res['dual'], use_container_width=True)
+            
+            # 3. 結論
+            st.header("3. 綜合診斷與建議")
+            st.markdown(texts_res['action_plan'])
 
 if __name__ == "__main__":
     main()
