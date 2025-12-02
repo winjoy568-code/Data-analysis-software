@@ -10,15 +10,15 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import re
 
 # ==========================================
-# 0. 系統設定 (System Config)
+# 0. System Configuration
 # ==========================================
-st.set_page_config(page_title="生產效能智慧分析系統 Pro", layout="centered")
+st.set_page_config(page_title="Production Efficiency Analysis Pro", layout="centered")
 
 st.markdown("""
     <style>
     .main { background-color: #ffffff; }
     
-    /* 規格 5.1: 全域通用字體 */
+    /* Font Settings */
     html, body, [class*="css"] {
         font-family: Arial, sans-serif;
         color: #000000;
@@ -31,25 +31,25 @@ st.markdown("""
     p, li, .stMarkdown { font-size: 16px !important; line-height: 1.7 !important; color: #212f3d !important; }
     div[data-testid="stMetricValue"] { font-size: 28px !important; color: #17202a !important; font-weight: bold; }
     
-    /* 規格 5.2: 視覺元件樣式 */
+    /* Analysis Box Styles */
     .insight-box { border: 1px solid #d6eaf8; background-color: #ebf5fb; padding: 15px; border-radius: 5px; margin-top: 10px; margin-bottom: 20px; }
     .summary-box { border: 2px solid #566573; background-color: #fdfefe; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
     
-    /* 表格優化 */
+    /* Table Optimization */
     thead tr th:first-child {display:none} tbody th {display:none}
     div.stButton > button:first-child { width: 100%; height: 3em; font-weight: bold; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. Data Engine (數據處理核心)
+# 1. Data Engine
 # ==========================================
 class DataEngine:
     @staticmethod
     def clean_and_process(df_raw, params):
         df = df_raw.copy()
         
-        # 1. 智慧欄位映射
+        # 1. Field Mapping
         rename_map = {
             "用電量(kWh)": "耗電量", "產量(雙)": "產量", 
             "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"
@@ -57,15 +57,15 @@ class DataEngine:
         for user_col, sys_col in rename_map.items():
             if user_col in df.columns: df = df.rename(columns={user_col: sys_col})
             
-        # 2. 完整性檢查
+        # 2. Integrity Check
         required_cols = ["機台編號", "耗電量", "產量", "OEE_RAW"]
         if not all(col in df.columns for col in required_cols):
-            return None, None, f"缺少必要欄位: {[c for c in required_cols if c not in df.columns]}"
+            return None, None, f"Missing columns: {[c for c in required_cols if c not in df.columns]}"
             
         if "日期" in df.columns: df["日期"] = pd.to_datetime(df["日期"]).dt.date
         if "廠別" not in df.columns: df["廠別"] = "匯入廠區"
 
-        # 3. 核心指標運算
+        # 3. Core Metrics
         df["OEE"] = df["OEE_RAW"].apply(lambda x: x / 100.0 if x > 1.0 else x)
         df["單位能耗"] = df.apply(lambda row: row["耗電量"] / row["產量"] if row["產量"] > 0 else 0, axis=1)
         
@@ -84,7 +84,7 @@ class DataEngine:
         
         df["總損失"] = df["能源損失"] + df["產能損失機會成本"]
         
-        # 4. 聚合運算
+        # 4. Aggregation
         group_col = "廠別" if df["廠別"].nunique() > 1 else "機台編號"
         analysis_scope = "跨廠區分析" if group_col == "廠別" else "單廠設備分析"
         
@@ -101,7 +101,7 @@ class DataEngine:
         return df, summary_agg, analysis_scope
 
 # ==========================================
-# 2. Insight Engine (診斷分析大腦)
+# 2. Insight Engine
 # ==========================================
 class InsightEngine:
     @staticmethod
@@ -109,7 +109,7 @@ class InsightEngine:
         texts = {}
         target_oee = params['target_oee'] / 100.0
         
-        # 1. 總體 KPI
+        # 1. KPI
         avg_oee = df["OEE"].mean()
         total_loss = df["總損失"].sum()
         best_name = summary_agg.iloc[0][group_col]
@@ -117,28 +117,20 @@ class InsightEngine:
         
         texts['kpi_summary'] = f"本次分析區間內，整體平均 OEE 為 **{avg_oee:.1%}**。其中 **{best_name}** 表現最佳，為全廠標竿；而 **{worst_name}** 效率敬陪末座，是造成全廠 **NT$ {total_loss:,.0f}** 潛在損失的主要原因。"
         
-        # 2. 標竿與落差分析
+        # 2. Benchmark Analysis
         best_machine = summary_agg.iloc[0]
         worst_machine = summary_agg.iloc[-1]
         
-        energy_gap_msg = ""
-        if best_machine['平均單位能耗'] > 0 and worst_machine['平均單位能耗'] > 0:
-            ratio = worst_machine['平均單位能耗'] / best_machine['平均單位能耗']
-            energy_gap_msg = f"比冠軍機台多消耗了 **{ratio:.1f} 倍** 的電力"
-        
-        # 3. 產能潛力預估
-        potential_prod = 0
-        margin = params['product_margin']
-        if worst_machine['OEE'] > 0:
-            potential_prod = (best_machine['OEE'] - worst_machine['OEE']) / worst_machine['OEE'] * worst_machine['產量']
-        potential_revenue = potential_prod * margin
-        
+        eff_gap_pct = 0
+        if best_machine['平均單位能耗'] > 0:
+            eff_gap_pct = ((worst_machine['平均單位能耗'] - best_machine['平均單位能耗']) / best_machine['平均單位能耗']) * 100
+            
         texts['benchmark_analysis'] = f"""
-        * **標竿設備 ({best_machine[group_col]})**：表現最佳，平均 OEE 達 **{best_machine['OEE']:.1%}**，單位能耗最低 ({best_machine['平均單位能耗']:.5f} kWh/雙)。
-        * **瓶頸設備 ({worst_machine[group_col]})**：{energy_gap_msg}。若能將其效率提升至標竿水準，本期間預計可額外生產 **{potential_prod:,.0f} 雙**，相當於挽回 **NT$ {potential_revenue:,.0f}** 的營收損失。
+        * **標竿設備 ({best_machine[group_col]})**：表現最佳，平均 OEE 達 **{best_machine['OEE']:.1%}**，為本次分析之冠軍機台。
+        * **瓶頸設備 ({worst_machine[group_col]})**：表現最弱，單位生產成本比標竿高出 **{eff_gap_pct:.1f}%**，是主要的成本浪費來源。
         """
         
-        # 4. 穩定性分析
+        # 3. Stability Analysis
         cv_text = "數據量不足以計算波動率。"
         if len(df) > 1:
             cv_series = df.groupby(group_col)["OEE"].std() / df.groupby(group_col)["OEE"].mean()
@@ -147,7 +139,7 @@ class InsightEngine:
             cv_text = f"**{most_stable}** 生產節奏最穩定 (CV最低)；**{most_unstable}** 波動最大，顯示製程或人員操作存在變異。"
         texts['stability_analysis'] = cv_text
         
-        # 5. 策略行動建議
+        # 4. Action Plan
         crit_list, avg_list, good_list = [], [], []
         for _, row in summary_agg.iterrows():
             name = row[group_col]
@@ -157,7 +149,7 @@ class InsightEngine:
             
         action_text = ""
         if crit_list:
-            action_text += f"🔴 **優先改善 (Priority)**：{', '.join(crit_list)}\n   * 問題：OEE 低於 70%，效率偏低。\n   * 行動：立即調閱異常停機代碼，檢查是否有「待機未關機」或「頻繁短停機」。\n\n"
+            action_text += f"🔴 **優先改善 (Priority)**：{', '.join(crit_list)}\n   * 問題：OEE 低於 70%，可能存在空轉浪費。\n   * 行動：立即調閱異常停機代碼，檢查是否有「待機未關機」情況。\n\n"
         if avg_list:
             action_text += f"🟡 **效能提升 (Improvement)**：{', '.join(avg_list)}\n   * 問題：表現平穩但未達標竿。\n   * 行動：微調參數 (速度/溫度)，目標提升 5-10% 稼動率。\n\n"
         if good_list:
@@ -167,7 +159,7 @@ class InsightEngine:
         return texts
 
 # ==========================================
-# 3. Viz Engine (視覺化中心)
+# 3. Viz Engine
 # ==========================================
 class VizEngine:
     @staticmethod
@@ -240,7 +232,7 @@ class VizEngine:
         return fig
 
 # ==========================================
-# 4. Report Engine (匯出中心)
+# 4. Report Engine
 # ==========================================
 class ReportEngine:
     @staticmethod
@@ -307,14 +299,14 @@ class ReportEngine:
         return bio
 
 # ==========================================
-# 5. Main App (主程式邏輯)
+# 5. Main App
 # ==========================================
 def main():
-    # --- Input Section ---
+    # --- Input ---
     st.markdown("### 📥 數據輸入控制台")
     uploaded_file = st.file_uploader("匯入生產報表 (Excel/CSV)", type=["xlsx", "csv"], label_visibility="collapsed")
     
-    # 初始化 Session
+    # Initialize Session State
     if 'input_data' not in st.session_state:
         st.session_state.input_data = pd.DataFrame([
             {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 50.1, "產量(雙)": 2009.5, "用電量(kWh)": 6.2},
@@ -330,7 +322,6 @@ def main():
             else: 
                 df_new = pd.read_excel(uploaded_file)
             
-            # 欄位映射
             rename_map = {"用電量(kWh)": "耗電量", "產量(雙)": "產量", "OEE(%)": "OEE_RAW", "設備": "機台編號", "機台": "機台編號"}
             for user_col, sys_col in rename_map.items():
                 if user_col in df_new.columns: df_new = df_new.rename(columns={user_col: sys_col})
@@ -345,7 +336,7 @@ def main():
         st.session_state.input_data = pd.DataFrame(columns=["日期", "廠別", "機台編號", "OEE(%)", "產量(雙)", "用電量(kWh)"])
         st.rerun()
 
-    # --- Params Section ---
+    # --- Params ---
     st.markdown("---")
     st.markdown("#### ⚙️ 分析參數設定")
     c1, c2, c3 = st.columns(3)
@@ -357,7 +348,7 @@ def main():
     
     st.write("")
     
-    # --- Action Section ---
+    # --- Action ---
     col_run, col_export = st.columns([1, 1])
     
     data_ready = False
@@ -387,14 +378,13 @@ def main():
         else:
             st.button("📥 下載 Word 報告", disabled=True)
 
-    # --- Display Section ---
+    # --- Display ---
     if start_btn and data_ready:
         with st.spinner('正在進行深度診斷...'):
             time.sleep(0.5)
             st.markdown("---")
             st.title("生產效能診斷分析報告")
             
-            # 1. 總覽
             st.header("1. 總體績效概覽")
             st.markdown(f'<div class="insight-box">{texts_res["kpi_summary"]}</div>', unsafe_allow_html=True)
             
@@ -406,7 +396,6 @@ def main():
             st.plotly_chart(figs_res['rank'], use_container_width=True)
             st.markdown(f'<div class="analysis-text">{texts_res["benchmark_analysis"]}</div>', unsafe_allow_html=True)
             
-            # 2. 趨勢與穩定性
             st.header("2. 生產趨勢與穩定性")
             c1, c2 = st.columns(2)
             with c1: 
@@ -419,7 +408,6 @@ def main():
             st.subheader("產量與能耗趨勢")
             st.plotly_chart(figs_res['dual'], use_container_width=True)
             
-            # 3. 結論
             st.header("3. 綜合診斷與建議")
             st.markdown(texts_res['action_plan'])
 
