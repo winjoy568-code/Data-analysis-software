@@ -11,7 +11,7 @@ import re
 import time
 
 # ==========================================
-# 0. 系統設定 (System Config)
+# 0. 系統設定
 # ==========================================
 st.set_page_config(page_title="生產效能智慧分析系統 Pro", layout="centered")
 
@@ -25,20 +25,38 @@ st.markdown("""
     h3 { color: #2e4053; margin-top: 25px; font-size: 1.3em; font-weight: 700; }
     
     p, li, .stMarkdown { font-size: 16px !important; line-height: 1.7 !important; color: #212f3d !important; }
-    div[data-testid="stMetricValue"] { font-size: 28px !important; color: #17202a !important; font-weight: bold; }
     
-    .chart-desc { font-size: 15px; color: #555; background-color: #f9f9f9; padding: 15px; border-left: 4px solid #bdc3c7; margin-bottom: 30px; margin-top: 0px; }
     .insight-box { border: 1px solid #d6eaf8; background-color: #ebf5fb; padding: 15px; border-radius: 5px; margin-top: 10px; margin-bottom: 20px; }
+    .chart-desc { font-size: 15px; color: #555; background-color: #f9f9f9; padding: 15px; border-left: 4px solid #bdc3c7; margin-bottom: 30px; margin-top: 0px; }
     
     thead tr th:first-child {display:none} tbody th {display:none}
-    
-    /* 按鈕樣式優化 */
     div.stButton > button { width: 100%; height: 3em; font-weight: bold; font-size: 16px; }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. Data Engine (數據處理核心)
+# 1. Helper Functions (文字處理工具)
+# ==========================================
+def md_to_html(text):
+    """將 Markdown 的 **粗體** 轉為 HTML 的 <b>粗體</b>，用於網頁顯示"""
+    if not isinstance(text, str): return str(text)
+    # 將 **text** 替換為 <b>text</b>
+    text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
+    # 處理換行
+    text = text.replace('\n', '<br>')
+    return text
+
+def clean_text_for_word(text):
+    """清除 Markdown 與 HTML 標籤，用於 Word 匯出"""
+    if not isinstance(text, str): return str(text)
+    text = re.sub(r'\*\*(.*?)\*\*', r'\1', text) # 移除 ** 保留文字
+    text = re.sub(r'<b>(.*?)</b>', r'\1', text)   # 移除 <b> 保留文字
+    text = re.sub(r'<br>', '\n', text)            # 轉回換行
+    text = re.sub(r'🔴|🟡|🟢', '', text)           # 移除 Emoji
+    return text.strip()
+
+# ==========================================
+# 2. Data Engine
 # ==========================================
 class DataEngine:
     @staticmethod
@@ -53,19 +71,28 @@ class DataEngine:
             if not all(col in df.columns for col in required_cols):
                 return None, None, f"資料表缺少必要欄位: {[c for c in required_cols if c not in df.columns]}"
             
-            if "日期" in df.columns: df["日期"] = pd.to_datetime(df["日期"]).dt.date
+            # 嘗試轉換日期，若失敗則提示
+            if "日期" in df.columns:
+                df["日期"] = pd.to_datetime(df["日期"], errors='coerce').dt.date
+                if df["日期"].isnull().any():
+                    return None, None, "日期格式錯誤，請確認 Excel 日期欄位格式。"
+
             if "廠別" not in df.columns: df["廠別"] = "匯入廠區"
 
             df["OEE"] = df["OEE_RAW"].apply(lambda x: x / 100.0 if x > 1.0 else x)
             df["單位能耗"] = df.apply(lambda row: row["耗電量"] / row["產量"] if row["產量"] > 0 else 0, axis=1)
             
-            best_energy = df[df["單位能耗"] > 0]["單位能耗"].min()
-            if pd.isna(best_energy): best_energy = 0
+            valid_energies = df[df["單位能耗"] > 0]["單位能耗"]
+            best_energy = valid_energies.min() if not valid_energies.empty else 0
             
-            df["能源損失"] = df.apply(lambda row: max(0, (row["單位能耗"] - best_energy) * row["產量"] * params['elec_price']), axis=1)
+            elec_price = params['elec_price']
+            target_oee = params['target_oee'] / 100.0
+            margin = params['product_margin']
+            
+            df["能源損失"] = df.apply(lambda row: max(0, (row["單位能耗"] - best_energy) * row["產量"] * elec_price), axis=1)
             df["產能損失機會成本"] = df.apply(
-                lambda row: ((params['target_oee']/100 - row["OEE"]) / row["OEE"] * row["產量"] * params['product_margin']) 
-                if 0 < row["OEE"] < params['target_oee']/100 else 0, axis=1
+                lambda row: ((target_oee - row["OEE"]) / row["OEE"] * row["產量"] * margin) 
+                if 0 < row["OEE"] < target_oee else 0, axis=1
             )
             df["總損失"] = df["能源損失"] + df["產能損失機會成本"]
             
@@ -87,18 +114,21 @@ class DataEngine:
             return None, None, str(e)
 
 # ==========================================
-# 2. Insight Engine (診斷分析大腦)
+# 3. Insight Engine
 # ==========================================
 class InsightEngine:
     @staticmethod
     def generate_narrative(df, summary_agg, group_col, params):
+        texts = {}
         target_oee = params['target_oee'] / 100.0
+        margin = params['product_margin']
+        
         avg_oee = df["OEE"].mean()
         total_loss = df["總損失"].sum()
         best_m = summary_agg.iloc[0]
         worst_m = summary_agg.iloc[-1]
         
-        texts = {}
+        # 使用 Markdown 語法 **粗體**，後續再轉譯
         texts['kpi_summary'] = f"本次分析區間內，整體平均 OEE 為 **{avg_oee:.1%}**。其中 **{best_m[group_col]}** 表現最佳，為全廠標竿；而 **{worst_m[group_col]}** 效率敬陪末座，是造成全廠 **NT$ {total_loss:,.0f}** 潛在損失的主要原因。"
         
         eff_gap_pct = 0
@@ -121,18 +151,17 @@ class InsightEngine:
         potential_prod = 0
         if worst_m['OEE'] > 0:
             potential_prod = (best_m['OEE'] - worst_m['OEE']) / worst_m['OEE'] * worst_m['產量']
-        potential_rev = potential_prod * params['product_margin']
-        
+        potential_rev = potential_prod * margin
         texts['opportunity_analysis'] = f"若能將 **{worst_m[group_col]}** 的效率提升至標竿水準，預計本期間可額外生產 **{potential_prod:,.0f} 雙**，相當於挽回 **NT$ {potential_rev:,.0f}** 的營收損失。"
 
         cv_text = "數據量不足以計算波動率。"
         if len(df) > 1:
             cv_series = df.groupby(group_col)["OEE"].std() / df.groupby(group_col)["OEE"].mean()
             most_stable = cv_series.idxmin()
-            cv_text = f"**{most_stable}** 生產節奏最穩定 (CV最低)；CV數值越高代表生產變異越大。"
-            
+            most_unstable = cv_series.idxmax()
+            cv_text = f"**{most_stable}** 生產節奏最穩定 (CV最低)；**{most_unstable}** 波動最大，顯示製程或人員操作存在變異。"
         texts['stability_analysis'] = cv_text
-        texts['cv_desc'] = "變異係數 (CV) 用於衡量生產穩定度。數值越低代表品質與產出越穩定可控；數值過高則代表生產過程極不穩定。"
+        texts['cv_desc'] = "變異係數 (CV) 用於衡量生產穩定度。數值越低代表品質與產出越穩定可控；數值過高則代表生產過程極不穩定，容易導致品質異常。"
         texts['scatter_desc'] = "此矩陣圖用於檢視效率與能耗的關聯。**右下角** (高OEE、低能耗) 為理想落點。若數據點落於 **左上角** (低OEE、高能耗)，通常代表設備處於「空轉浪費」狀態。"
 
         crit_list, avg_list, good_list = [], [], []
@@ -143,7 +172,7 @@ class InsightEngine:
             else: crit_list.append(name)
             
         action_text = ""
-        if crit_list: action_text += f"🔴 **優先改善**：{', '.join(crit_list)}。OEE 低於 70%，建議檢查待機未關機狀況。\n\n"
+        if crit_list: action_text += f"🔴 **優先改善**：{', '.join(crit_list)}。OEE 低於 70%，請檢查待機未關機狀況。\n\n"
         if avg_list: action_text += f"🟡 **效能提升**：{', '.join(avg_list)}。表現平穩，建議微調參數提升稼動率。\n\n"
         if good_list: action_text += f"🟢 **標竿管理**：{', '.join(good_list)}。運作優異，建議標準化SOP。"
         texts['action_plan'] = action_text
@@ -151,20 +180,32 @@ class InsightEngine:
         return texts
 
 # ==========================================
-# 3. Viz Engine (視覺化中心)
+# 4. Viz Engine
 # ==========================================
 class VizEngine:
     @staticmethod
     def _common_layout():
-        return dict(plot_bgcolor='white', font=dict(family='Arial, sans-serif', color='black', size=12), margin=dict(l=40, r=40, t=40, b=40))
+        return dict(
+            plot_bgcolor='white',
+            font=dict(family='Arial, sans-serif', color='black', size=12),
+            xaxis=dict(showgrid=True, gridcolor='#f0f0f0'),
+            yaxis=dict(showgrid=True, gridcolor='#f0f0f0'),
+            margin=dict(l=40, r=40, t=40, b=40)
+        )
 
     @staticmethod
     def create_rank_chart(summary_agg, group_col):
-        fig = px.bar(summary_agg.sort_values("OEE", ascending=True), x="OEE", y=group_col, orientation='h', text="OEE", title="綜合實力排名 (依 OEE 排序)")
-        fig.update_traces(marker_color='#2E86C1', texttemplate='%{text:.1%}', textposition='outside')
-        fig.update_layout(VizEngine._common_layout())
-        fig.update_layout(xaxis=dict(range=[0, summary_agg['OEE'].max() * 1.25]))
-        return fig
+        try:
+            fig = px.bar(
+                summary_agg.sort_values("OEE", ascending=True),
+                x="OEE", y=group_col, orientation='h', text="OEE",
+                title="綜合實力排名 (依 OEE 排序)"
+            )
+            fig.update_traces(marker_color='#2E86C1', texttemplate='%{text:.1%}', textposition='outside')
+            fig.update_layout(VizEngine._common_layout())
+            fig.update_layout(xaxis=dict(range=[0, summary_agg['OEE'].max() * 1.25])) 
+            return fig
+        except: return go.Figure()
 
     @staticmethod
     def create_cv_chart(df, group_col):
@@ -181,10 +222,19 @@ class VizEngine:
     @staticmethod
     def create_scatter_chart(df, group_col):
         try:
-            fig = px.scatter(df, x="OEE", y="單位能耗", color=group_col, size="產量", title="效率 vs 能耗 關聯分析", color_discrete_sequence=px.colors.qualitative.Set1)
-            fig.update_layout(VizEngine._common_layout())
-            return fig
-        except: return go.Figure()
+            fig = px.scatter(
+                df, x="OEE", y="單位能耗", color=group_col, size="產量",
+                trendline="ols", title="效率 vs 能耗 關聯分析",
+                color_discrete_sequence=px.colors.qualitative.Set1
+            )
+        except:
+            fig = px.scatter(
+                df, x="OEE", y="單位能耗", color=group_col, size="產量",
+                title="效率 vs 能耗 關聯分析",
+                color_discrete_sequence=px.colors.qualitative.Set1
+            )
+        fig.update_layout(VizEngine._common_layout())
+        return fig
 
     @staticmethod
     def create_dual_axis_chart(df, group_col):
@@ -213,7 +263,10 @@ class VizEngine:
     def create_unit_energy_chart(summary_agg, group_col):
         try:
             sorted_agg = summary_agg.sort_values("平均單位能耗")
-            fig = px.bar(sorted_agg, x=group_col, y="平均單位能耗", text="平均單位能耗", title="平均單位能耗 (越低越好)")
+            fig = px.bar(
+                sorted_agg, x=group_col, y="平均單位能耗", text="平均單位能耗",
+                title="平均單位能耗 (越低越好)"
+            )
             fig.update_traces(marker_color='#145a32', texttemplate='%{text:.5f}', textposition='outside')
             layout = VizEngine._common_layout()
             layout.update(yaxis=dict(range=[0, sorted_agg['平均單位能耗'].max() * 1.2]))
@@ -222,16 +275,9 @@ class VizEngine:
         except: return go.Figure()
 
 # ==========================================
-# 4. Report Engine (匯出中心)
+# 5. Report Engine (匯出中心)
 # ==========================================
 class ReportEngine:
-    @staticmethod
-    def clean_markdown(text):
-        if not isinstance(text, str): return str(text)
-        text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
-        text = re.sub(r'🔴|🟡|🟢', '', text)
-        return text.strip()
-
     @staticmethod
     def generate_docx(df, summary_agg, texts, figures, analysis_scope):
         doc = Document()
@@ -245,8 +291,9 @@ class ReportEngine:
         doc.add_paragraph(f"期間：{df['日期'].min()} ~ {df['日期'].max()}")
         doc.add_paragraph("-" * 60)
         
+        # 1. 總覽
         doc.add_heading('1. 總體績效概覽', level=1)
-        doc.add_paragraph(ReportEngine.clean_markdown(texts['kpi_summary']))
+        doc.add_paragraph(clean_text_for_word(texts['kpi_summary']))
         
         table = doc.add_table(rows=1, cols=len(summary_agg.columns))
         table.style = 'Table Grid'
@@ -256,12 +303,17 @@ class ReportEngine:
         for _, row in summary_agg.iterrows():
             cells = table.add_row().cells
             for i, val in enumerate(row):
-                if isinstance(val, float): cells[i].text = f"{val:.2f}"
+                col_name = summary_agg.columns[i]
+                if "OEE" in col_name: cells[i].text = f"{val:.1%}"
+                elif "能耗" in col_name: cells[i].text = f"{val:.5f}"
+                elif "損失" in col_name or "產量" in col_name: cells[i].text = f"{val:,.0f}"
+                elif isinstance(val, float): cells[i].text = f"{val:.1f}"
                 else: cells[i].text = str(val)
         
+        # 2. 深度分析
         doc.add_heading('2. 深度診斷分析', level=1)
-        doc.add_paragraph(ReportEngine.clean_markdown(texts['benchmark_analysis']))
-        doc.add_paragraph(ReportEngine.clean_markdown(texts['opportunity_analysis']))
+        doc.add_paragraph(clean_text_for_word(texts['benchmark_analysis']))
+        doc.add_paragraph(clean_text_for_word(texts['opportunity_analysis']))
         
         def add_fig_section(key, title, desc_key):
             doc.add_heading(title, level=2)
@@ -269,43 +321,46 @@ class ReportEngine:
                 try:
                     img = figures[key].to_image(format="png", width=800, height=400, scale=1.5)
                     doc.add_picture(BytesIO(img), width=Inches(6.0))
-                except: doc.add_paragraph("[圖表略]")
+                except: doc.add_paragraph("[圖表無法自動生成，請參考網頁版]")
             if desc_key in texts:
-                doc.add_paragraph(ReportEngine.clean_markdown(texts[desc_key]))
+                doc.add_paragraph(clean_text_for_word(texts[desc_key]))
 
         add_fig_section('rank', '綜合實力排名', 'rank_desc')
         add_fig_section('dual', '產量與能耗趨勢', 'dual_desc')
         
+        # 3. 能耗
         doc.add_heading('3. 電力耗能分析', level=1)
         add_fig_section('pie', '總耗電量佔比', 'pie_desc')
         add_fig_section('unit', '平均單位能耗', 'unit_desc')
         
+        # 4. 穩定性
         doc.add_heading('4. 生產穩定性', level=1)
-        doc.add_paragraph(ReportEngine.clean_markdown(texts['stability_analysis']))
+        doc.add_paragraph(clean_text_for_word(texts['stability_analysis']))
         add_fig_section('cv', 'CV 變異係數', 'cv_desc')
         add_fig_section('scatter', '效率能耗矩陣', 'scatter_desc')
         
+        # 5. 建議
         doc.add_heading('5. 策略行動建議', level=1)
-        doc.add_paragraph(ReportEngine.clean_markdown(texts['action_plan']))
+        doc.add_paragraph(clean_text_for_word(texts['action_plan']))
         
         bio = BytesIO()
         doc.save(bio)
         return bio
 
 # ==========================================
-# 5. Main App
+# 6. Main App
 # ==========================================
 def main():
-    # Session Initialization
+    st.markdown("### 📥 數據輸入控制台")
+    uploaded_file = st.file_uploader("匯入生產報表 (Excel/CSV)", type=["xlsx", "csv"], label_visibility="collapsed")
+    
     if 'input_data' not in st.session_state:
         st.session_state.input_data = pd.DataFrame([
             {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 50.1, "產量(雙)": 2009.5, "用電量(kWh)": 6.2},
             {"日期": "2025-11-17", "廠別": "A廠", "機台編號": "ACO4", "OEE(%)": 55.4, "產量(雙)": 4416.5, "用電量(kWh)": 9.1},
+            {"日期": "2025-11-18", "廠別": "A廠", "機台編號": "ACO2", "OEE(%)": 48.5, "產量(雙)": 1950.0, "用電量(kWh)": 6.0},
         ])
         st.session_state.input_data['日期'] = pd.to_datetime(st.session_state.input_data['日期']).dt.date
-
-    st.markdown("### 📥 數據輸入控制台")
-    uploaded_file = st.file_uploader("匯入生產報表 (Excel/CSV)", type=["xlsx", "csv"], label_visibility="collapsed")
     
     if uploaded_file:
         try:
@@ -316,8 +371,7 @@ def main():
             for user_col, sys_col in rename_map.items():
                 if user_col in df_new.columns: df_new = df_new.rename(columns={user_col: sys_col})
             st.session_state.input_data = df_new
-            st.rerun() # 強制刷新以載入新數據
-        except: st.error("檔案讀取失敗")
+        except Exception as e: st.error(f"檔案讀取失敗: {e}")
 
     edited_df = st.data_editor(st.session_state.input_data, num_rows="dynamic", use_container_width=True)
     
@@ -336,79 +390,87 @@ def main():
     
     st.write("")
     
-    # Action Section (移出 if 判斷，確保按鈕永遠可見)
     col_run, col_export = st.columns([1, 1])
     
-    # 執行運算邏輯
+    data_ready = False
     df_res, summary_res, scope_res, texts_res, figs_res = None, None, None, None, {}
-    data_valid = False
-    
+
     if not edited_df.empty:
-        # 呼叫 DataEngine
-        res = DataEngine.clean_and_process(edited_df, params)
-        if res[0] is not None: # 確保回傳正確
-            df_res, summary_res, scope_res = res
-            data_valid = True
-            texts_res = InsightEngine.generate_narrative(df_res, summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號", params)
-            figs_res = {
-                'rank': VizEngine.create_rank_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
-                'cv': VizEngine.create_cv_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
-                'scatter': VizEngine.create_scatter_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
-                'dual': VizEngine.create_dual_axis_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
-                'pie': VizEngine.create_pie_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
-                'unit': VizEngine.create_unit_energy_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號")
-            }
+        try:
+            res = DataEngine.clean_and_process(edited_df, params)
+            if res[0] is not None:
+                df_res, summary_res, scope_res = res
+                data_ready = True
+                texts_res = InsightEngine.generate_narrative(df_res, summary_res, 
+                                                           "廠別" if scope_res=="跨廠區分析" else "機台編號", 
+                                                           params)
+                figs_res = {
+                    'rank': VizEngine.create_rank_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
+                    'cv': VizEngine.create_cv_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
+                    'scatter': VizEngine.create_scatter_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
+                    'dual': VizEngine.create_dual_axis_chart(df_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
+                    'pie': VizEngine.create_pie_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號"),
+                    'unit': VizEngine.create_unit_energy_chart(summary_res, "廠別" if scope_res=="跨廠區分析" else "機台編號")
+                }
+            elif isinstance(res[2], str): # 顯示 DataEngine 的錯誤訊息
+                st.warning(res[2])
+        except Exception as e:
+            st.error(f"數據處理錯誤: {e}")
 
     with col_run:
-        start_btn = st.button("🚀 啟動全方位分析", type="primary", disabled=not data_valid)
+        start_btn = st.button("🚀 啟動全方位分析", type="primary", disabled=not data_ready)
         
     with col_export:
-        if data_valid:
+        if data_ready:
             try:
                 docx = ReportEngine.generate_docx(df_res, summary_res, texts_res, figs_res, scope_res)
                 st.download_button("📥 下載 Word 報告", docx.getvalue(), 
                                  f"生產效能報告_{pd.Timestamp.now().strftime('%Y%m%d')}.docx",
                                  "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
             except Exception as e:
-                st.error(f"匯出準備中: {e}") # 顯示非致命錯誤
+                st.error(f"匯出準備失敗: {e}")
         else:
             st.button("📥 下載 Word 報告", disabled=True)
 
-    # Display
-    if start_btn and data_valid:
-        st.markdown("---")
-        st.title("生產效能診斷分析報告")
-        
-        st.header("1. 總體績效概覽")
-        st.markdown(f'<div class="insight-box">{texts_res["kpi_summary"]}</div>', unsafe_allow_html=True)
-        st.subheader("績效總表")
-        st.dataframe(summary_res.style.format({"OEE": "{:.1%}", "平均單位能耗": "{:.5f}", "總損失": "${:,.0f}"}).background_gradient(subset=["OEE"], cmap="Blues"), use_container_width=True)
-        
-        st.plotly_chart(figs_res['rank'], use_container_width=True)
-        st.markdown(f'<div class="chart-desc">{texts_res["rank_desc"]}</div>', unsafe_allow_html=True)
-        
-        st.header("2. 深度診斷分析")
-        st.markdown(f'<div class="insight-box">{texts_res["benchmark_analysis"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="insight-box" style="border-color:#f1c40f; background-color:#fef9e7;">{texts_res["opportunity_analysis"]}</div>', unsafe_allow_html=True)
-        st.subheader("產量與能耗趨勢")
-        st.plotly_chart(figs_res['dual'], use_container_width=True)
-        st.markdown(f'<div class="chart-desc">{texts_res["dual_desc"]}</div>', unsafe_allow_html=True)
-        
-        st.header("3. 電力耗能深度分析")
-        st.plotly_chart(figs_res['pie'], use_container_width=True)
-        st.markdown(f'<div class="chart-desc">{texts_res["pie_desc"]}</div>', unsafe_allow_html=True)
-        st.plotly_chart(figs_res['unit'], use_container_width=True)
-        st.markdown(f'<div class="chart-desc">{texts_res["unit_desc"]}</div>', unsafe_allow_html=True)
-        
-        st.header("4. 生產趨勢與穩定性")
-        st.plotly_chart(figs_res['cv'], use_container_width=True)
-        st.markdown(f'<div class="chart-desc">{texts_res["cv_desc"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="insight-box">{texts_res["stability_analysis"]}</div>', unsafe_allow_html=True)
-        st.plotly_chart(figs_res['scatter'], use_container_width=True)
-        st.markdown(f'<div class="chart-desc">{texts_res["scatter_desc"]}</div>', unsafe_allow_html=True)
-        
-        st.header("5. 綜合診斷與建議")
-        st.markdown(texts_res['action_plan'])
+    if start_btn and data_ready:
+        with st.spinner('正在進行深度診斷...'):
+            time.sleep(0.5)
+            st.markdown("---")
+            st.title("生產效能診斷分析報告")
+            
+            st.header("1. 總體績效概覽")
+            # 網頁版使用 HTML 轉譯函數
+            st.markdown(f'<div class="insight-box">{md_to_html(texts_res["kpi_summary"])}</div>', unsafe_allow_html=True)
+            
+            st.subheader("績效總表")
+            st.dataframe(summary_res.style.format({"OEE": "{:.1%}", "平均單位能耗": "{:.5f}", "總損失": "${:,.0f}"}).background_gradient(subset=["OEE"], cmap="Blues"), use_container_width=True)
+            
+            st.plotly_chart(figs_res['rank'], use_container_width=True)
+            st.markdown(f'<div class="chart-desc">{texts_res["rank_desc"]}</div>', unsafe_allow_html=True)
+            
+            st.header("2. 深度診斷分析")
+            st.markdown(f'<div class="analysis-text">{md_to_html(texts_res["benchmark_analysis"])}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="insight-box">{md_to_html(texts_res["opportunity_analysis"])}</div>', unsafe_allow_html=True)
+            st.subheader("產量與能耗趨勢")
+            st.plotly_chart(figs_res['dual'], use_container_width=True)
+            st.markdown(f'<div class="chart-desc">{texts_res["dual_desc"]}</div>', unsafe_allow_html=True)
+            
+            st.header("3. 電力耗能深度分析")
+            st.plotly_chart(figs_res['pie'], use_container_width=True)
+            st.markdown(f'<div class="chart-desc">{texts_res["pie_desc"]}</div>', unsafe_allow_html=True)
+            st.plotly_chart(figs_res['unit'], use_container_width=True)
+            st.markdown(f'<div class="chart-desc">{md_to_html(texts_res["unit_desc"])}</div>', unsafe_allow_html=True)
+            
+            st.header("4. 生產趨勢與穩定性")
+            st.plotly_chart(figs_res['cv'], use_container_width=True)
+            st.markdown(f'<div class="chart-desc">{texts_res["cv_desc"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="analysis-text">{md_to_html(texts_res["stability_analysis"])}</div>', unsafe_allow_html=True)
+            
+            st.plotly_chart(figs_res['scatter'], use_container_width=True)
+            st.markdown(f'<div class="chart-desc">{md_to_html(texts_res["scatter_desc"])}</div>', unsafe_allow_html=True)
+            
+            st.header("5. 綜合診斷與建議")
+            st.markdown(texts_res['action_plan'])
 
 if __name__ == "__main__":
     main()
